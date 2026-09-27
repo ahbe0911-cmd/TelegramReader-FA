@@ -217,22 +217,39 @@ class TelegramRepository(private val context: Context) {
                         }
                     }
 
-                    val documents = buildList {
-                        item.optJSONObject("document")?.let { document ->
-                            val documentUrl = normalizeReaderUrl(
-                                document.optStringOrNull("url"),
+                    val documents = mutableListOf<TelegramDocument>()
+                    item.optJSONObject("document")?.let { document ->
+                        val documentUrl = normalizeReaderUrl(
+                            document.optStringOrNull("url"),
+                        )
+                        if (!documentUrl.isNullOrBlank()) {
+                            documents += TelegramDocument(
+                                title = document.optString("title")
+                                    .ifBlank { "فایل" },
+                                extra = document.optStringOrNull("extra"),
+                                url = documentUrl,
                             )
-                            if (!documentUrl.isNullOrBlank()) {
-                                add(
-                                    TelegramDocument(
-                                        title = document.optString("title")
-                                            .ifBlank { "فایل" },
-                                        extra = document.optStringOrNull("extra"),
-                                        url = documentUrl,
-                                    ),
-                                )
-                            }
                         }
+                    }
+
+                    val backendMediaType = item.optStringOrNull("mediaType")?.lowercase()
+                    val backendMediaUrl = normalizeReaderUrl(
+                        item.optStringOrNull("mediaUrl"),
+                    )
+                    if (
+                        documents.isEmpty() &&
+                        !backendMediaUrl.isNullOrBlank() &&
+                        backendMediaType in setOf("audio", "voice")
+                    ) {
+                        documents += TelegramDocument(
+                            title = if (backendMediaType == "voice") {
+                                "پیام صوتی.ogg"
+                            } else {
+                                "فایل صوتی.mp3"
+                            },
+                            extra = "پخش داخل برنامه",
+                            url = backendMediaUrl,
+                        )
                     }
 
                     add(
@@ -665,7 +682,19 @@ class TelegramRepository(private val context: Context) {
                 extra = extra,
                 url = href,
             )
-        }.distinctBy { it.url }
+        }.distinctBy { it.url }.toMutableList()
+
+        message.select("audio").forEach { audio ->
+            val src = absoluteUrl(audio, "src")
+                ?: audio.selectFirst("source")?.let { absoluteUrl(it, "src") }
+            if (!src.isNullOrBlank() && documents.none { it.url == src }) {
+                documents += TelegramDocument(
+                    title = "فایل صوتی.mp3",
+                    extra = "پخش داخل برنامه",
+                    url = src,
+                )
+            }
+        }
 
         val cleanMedia = media
             .filter { it.url.startsWith("http") }
