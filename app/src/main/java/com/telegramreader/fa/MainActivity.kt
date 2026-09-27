@@ -43,6 +43,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.ArrowBack
