@@ -16,8 +16,8 @@ android {
         applicationId = "com.telegramreader.fa"
         minSdk = 28
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.7.0"
+        versionCode = 9
+        versionName = "0.8.0"
     }
 
     buildTypes {
@@ -107,6 +107,8 @@ dependencies {
 
     // Dedicated Pdfium-based viewer: zoom, smooth scrolling and page caching.
     implementation("com.github.mhiew:android-pdf-viewer:3.2.0-beta.3")
+
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

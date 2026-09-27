@@ -205,7 +205,7 @@ fun TelegramReaderApp() {
                                     "feed" -> selectedChannel?.let { "@$it" } ?: "کانال"
                                     "news" -> "اخبار"
                                     "cafenet" -> "کافی‌نت"
-                                    else -> "تلگرام‌خوان فارسی"
+                                    else -> "نبضک"
                                 },
                                 fontWeight = FontWeight.SemiBold,
                             )

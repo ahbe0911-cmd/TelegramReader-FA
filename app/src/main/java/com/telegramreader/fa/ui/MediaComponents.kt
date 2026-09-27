@@ -1,5 +1,6 @@
 package com.telegramreader.fa.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,7 @@ import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import coil.request.ImageRequest
 import com.github.barteksc.pdfviewer.PDFView
+import com.telegramreader.fa.data.MediaAction
 import com.telegramreader.fa.data.TelegramRepository
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -247,21 +249,88 @@ fun AudioDocumentPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val httpClient = remember(url) { repository.client() }
-    var failedMessage by remember(url) { mutableStateOf<String?>(null) }
+    val actionState by produceState<Result<MediaAction>?>(initialValue = null, url, title) {
+        value = runCatching {
+            withContext(Dispatchers.IO) {
+                repository.prepareAudio(url, title)
+            }
+        }
+    }
 
-    val player = remember(url, httpClient) {
-        val dataSourceFactory = OkHttpDataSource.Factory(httpClient)
-            .setDefaultRequestProperties(
-                mapOf(
-                    "User-Agent" to TelegramRepository.USER_AGENT,
-                    "Referer" to "https://reader.duckpsycho.dev/",
-                    "Accept" to "*/*",
-                ),
-            )
-        val source = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(url))
+    when (val actionResult = actionState) {
+        null -> Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            ),
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(26.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.size(10.dp))
+                Column {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "در حال یافتن لینک واقعی فایل صوتی…",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
 
+        else -> actionResult.fold(
+            onSuccess = { action ->
+                ResolvedAudioPlayer(
+                    repository = repository,
+                    action = action,
+                    title = title,
+                    modifier = modifier,
+                )
+            },
+            onFailure = { error ->
+                Card(
+                    modifier = modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Text(
+                        error.message ?: "فایل صوتی قابل پخش نیست.",
+                        modifier = Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ResolvedAudioPlayer(
+    repository: TelegramRepository,
+    action: MediaAction,
+    title: String,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val httpClient = remember { repository.client() }
+
+    val sourceKey = when (action) {
+        is MediaAction.PlayAudioStream -> action.resolved.finalUrl
+        is MediaAction.PlayAudioFile -> action.file.absolutePath
+        else -> "invalid"
+    }
+
+    var failedMessage by remember(sourceKey) { mutableStateOf<String?>(null) }
+
+    val player = remember(sourceKey, httpClient) {
         ExoPlayer.Builder(context)
             .setLoadControl(
                 DefaultLoadControl.Builder()
@@ -276,7 +345,25 @@ fun AudioDocumentPlayer(
             )
             .build()
             .apply {
-                setMediaSource(source)
+                when (action) {
+                    is MediaAction.PlayAudioStream -> {
+                        val dataSourceFactory = OkHttpDataSource.Factory(httpClient)
+                            .setDefaultRequestProperties(action.resolved.requiredHeaders)
+                        val source = ProgressiveMediaSource.Factory(dataSourceFactory)
+                            .createMediaSource(
+                                MediaItem.fromUri(action.resolved.finalUrl),
+                            )
+                        setMediaSource(source)
+                    }
+
+                    is MediaAction.PlayAudioFile -> {
+                        setMediaItem(
+                            MediaItem.fromUri(Uri.fromFile(action.file)),
+                        )
+                    }
+
+                    else -> Unit
+                }
                 prepare()
             }
     }
@@ -301,7 +388,9 @@ fun AudioDocumentPlayer(
                 failedMessage = error.localizedMessage ?: "پخش فایل صوتی ممکن نشد."
             }
         }
+
         player.addListener(listener)
+
         onDispose {
             player.removeListener(listener)
             player.release()
@@ -349,7 +438,9 @@ fun AudioDocumentPlayer(
                         tint = MaterialTheme.colorScheme.onPrimary,
                     )
                 }
+
                 Spacer(Modifier.size(10.dp))
+
                 Column(Modifier.weight(1f)) {
                     Text(
                         title,
@@ -357,7 +448,11 @@ fun AudioDocumentPlayer(
                         maxLines = 1,
                     )
                     Text(
-                        failedMessage ?: "پخش مستقیم داخل برنامه",
+                        failedMessage ?: when (action) {
+                            is MediaAction.PlayAudioStream -> "پخش مستقیم از لینک نهایی"
+                            is MediaAction.PlayAudioFile -> "پخش از کش محلی"
+                            else -> ""
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (failedMessage == null) {
                             MaterialTheme.colorScheme.onSecondaryContainer
@@ -366,15 +461,19 @@ fun AudioDocumentPlayer(
                         },
                     )
                 }
+
                 Text(
                     "${formatMediaTime(position)} / ${formatMediaTime(duration)}",
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
+
             Slider(
                 value = if (duration > 0L) {
                     (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                } else 0f,
+                } else {
+                    0f
+                },
                 onValueChange = { fraction ->
                     if (duration > 0L) {
                         player.seekTo((duration * fraction).toLong())

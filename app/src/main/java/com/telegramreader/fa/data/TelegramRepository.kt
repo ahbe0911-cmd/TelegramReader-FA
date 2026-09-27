@@ -5,7 +5,6 @@ import android.net.Uri
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Proxy
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import okhttp3.Cache
 import okhttp3.ConnectionPool
@@ -30,6 +29,26 @@ private data class ProxySnapshot(
 
 class TelegramRepository(private val context: Context) {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val cookieJar = PersistentMediaCookieJar(context)
+
+    private val mediaResolver by lazy {
+        MediaResolver(
+            clientProvider = { client() },
+            cookieJar = cookieJar,
+            backendBaseUrl = READER_BACKEND_BASE_URL,
+        )
+    }
+
+    private val mediaDownloadManager by lazy {
+        MediaDownloadManager(
+            context = context,
+            clientProvider = { client() },
+        )
+    }
+
+    private val mediaTypeRouter by lazy {
+        MediaTypeRouter(mediaDownloadManager)
+    }
 
     private val httpCache by lazy {
         Cache(File(context.cacheDir, "http_cache"), 256L * 1024L * 1024L)
@@ -71,6 +90,7 @@ class TelegramRepository(private val context: Context) {
                 .retryOnConnectionFailure(true)
                 .followRedirects(true)
                 .followSslRedirects(true)
+                .cookieJar(cookieJar)
 
             if (snapshot.enabled && snapshot.host.isNotBlank() && snapshot.port in 1..65535) {
                 val proxyType = if (snapshot.type == "SOCKS") Proxy.Type.SOCKS else Proxy.Type.HTTP
@@ -355,42 +375,42 @@ class TelegramRepository(private val context: Context) {
         }
     }
 
-    fun downloadPdf(url: String, title: String): File {
-        val safeName = sanitizeFileName(
-            title.ifBlank { "document.pdf" },
-        ).let { if (it.lowercase().endsWith(".pdf")) it else "$it.pdf" }
-
-        val key = sha256(url).take(20)
-        val dir = File(context.cacheDir, "pdf").also { it.mkdirs() }
-        val target = File(dir, "${key}_$safeName")
-
-        if (target.exists() && target.length() > 5L && looksLikePdf(target)) {
-            target.setLastModified(System.currentTimeMillis())
-            return target
-        }
-
-        target.delete()
-        val temp = File(dir, "$key.download").also { it.delete() }
-
-        downloadToFile(
-            url = url,
-            title = safeName,
-            target = temp,
-            expectedPdf = true,
+    /**
+     * One entry point for every document. All callers share resolver, cookies, redirects,
+     * MIME sniffing, cache and download semantics.
+     */
+    fun resolveMedia(
+        url: String,
+        title: String,
+        expectedMime: String? = null,
+    ): ResolvedMedia =
+        mediaResolver.resolveMedia(
+            documentUrl = url,
+            suggestedName = title,
+            expectedMime = expectedMime,
         )
 
-        if (!looksLikePdf(temp)) {
-            temp.delete()
-            error("فایل دریافت‌شده PDF معتبر نیست.")
-        }
+    fun routeMedia(
+        url: String,
+        title: String,
+        expectedMime: String? = null,
+    ): MediaAction {
+        val resolved = resolveMedia(url, title, expectedMime)
+        return mediaTypeRouter.route(resolved)
+    }
 
-        if (!temp.renameTo(target)) {
-            temp.copyTo(target, overwrite = true)
-            temp.delete()
+    fun downloadPdf(url: String, title: String): File {
+        val action = routeMedia(
+            url = url,
+            title = title,
+            expectedMime = "application/pdf",
+        )
+        return when (action) {
+            is MediaAction.OpenInternalPdfViewer -> action.file
+            else -> throw MediaResolutionException.InvalidContent(
+                "این فایل به‌عنوان PDF معتبر تشخیص داده نشد.",
+            )
         }
-
-        trimPdfCache(dir)
-        return target
     }
 
     fun downloadFileToUri(
@@ -398,155 +418,45 @@ class TelegramRepository(private val context: Context) {
         title: String,
         destination: Uri,
     ) {
-        val resolver = context.contentResolver
-        resolver.openOutputStream(destination, "w")?.buffered()?.use { output ->
-            openResolvedDownload(url, title).use { response ->
-                val body = response.body ?: error("فایل خالی است.")
-                body.byteStream().buffered().use { input ->
-                    input.copyTo(output)
-                }
-            }
-        } ?: error("محل ذخیره فایل قابل دسترسی نیست.")
+        val resolved = resolveMedia(
+            url = url,
+            title = title,
+            expectedMime = MediaSniffer.mimeFromName(title),
+        )
+        mediaDownloadManager.downloadToUri(resolved, destination)
     }
 
     fun downloadFileToCache(
         url: String,
         title: String,
     ): File {
-        val safeName = sanitizeFileName(title.ifBlank { "telegram-file" })
-        val key = sha256(url).take(24)
-        val dir = File(context.cacheDir, "documents").also { it.mkdirs() }
-        val target = File(dir, "${key}_$safeName")
-
-        if (target.exists() && target.length() > 0L) {
-            target.setLastModified(System.currentTimeMillis())
-            return target
-        }
-
-        val temp = File(dir, "$key.part").also { it.delete() }
-        openResolvedDownload(url, title).use { response ->
-            val body = response.body ?: error("فایل خالی است.")
-            temp.outputStream().buffered().use { output ->
-                body.byteStream().buffered().use { input ->
-                    input.copyTo(output)
-                }
-            }
-        }
-
-        if (target.exists()) target.delete()
-        if (!temp.renameTo(target)) {
-            temp.copyTo(target, overwrite = true)
-            temp.delete()
-        }
-
-        trimDocumentCache(dir)
-        return target
+        val resolved = resolveMedia(
+            url = url,
+            title = title,
+            expectedMime = MediaSniffer.mimeFromName(title),
+        )
+        return mediaDownloadManager.downloadToCache(resolved)
     }
 
-    private fun trimDocumentCache(dir: File) {
-        val files = dir.listFiles()
-            ?.filter { it.isFile && !it.name.endsWith(".part") }
-            ?.sortedBy { it.lastModified() }
-            ?.toMutableList()
-            ?: return
-
-        var total = files.sumOf { it.length() }
-        while (total > MAX_DOCUMENT_CACHE_BYTES && files.isNotEmpty()) {
-            val file = files.removeAt(0)
-            total -= file.length()
-            file.delete()
-        }
-    }
-
-    private fun downloadToFile(
+    fun prepareAudio(
         url: String,
         title: String,
-        target: File,
-        expectedPdf: Boolean,
-    ) {
-        openResolvedDownload(url, title).use { response ->
-            val body = response.body ?: error("فایل خالی است.")
-            val contentLength = body.contentLength()
-
-            if (expectedPdf && contentLength > MAX_PDF_BYTES) {
-                error("حجم PDF برای نمایش داخل برنامه بیش از حد زیاد است.")
-            }
-
-            target.outputStream().buffered().use { output ->
-                body.byteStream().buffered().use { input ->
-                    input.copyTo(output)
-                }
-            }
-        }
-    }
-
-    private fun openResolvedDownload(
-        initialUrl: String,
-        title: String,
-        depth: Int = 0,
-    ): okhttp3.Response {
-        val request = Request.Builder()
-            .url(initialUrl)
-            .header("Accept", "*/*")
-            .header("Referer", "https://t.me/")
-            .header("User-Agent", USER_AGENT)
-            .get()
-            .build()
-
-        val response = client().newCall(request).execute()
-        if (!response.isSuccessful) {
-            val code = response.code
-            response.close()
-            error("دانلود فایل ناموفق بود: $code")
-        }
-
-        val type = response.header("Content-Type").orEmpty().lowercase()
-        val isHtml = type.contains("text/html") || type.contains("application/xhtml")
-        if (!isHtml || depth >= 2) return response
-
-        val body = response.body ?: return response
-        val html = body.string()
-        val baseUrl = response.request.url.toString()
-        response.close()
-
-        val expectedExt = title.substringAfterLast('.', "")
-            .lowercase()
-            .takeIf { it.length in 2..8 }
-
-        val document = Jsoup.parse(html, baseUrl)
-        val candidates = document.select("a[href]").mapNotNull { anchor ->
-            val href = anchor.absUrl("href").ifBlank { null } ?: return@mapNotNull null
-            if (!href.startsWith("http")) return@mapNotNull null
-
-            val lower = href.lowercase()
-            var score = 0
-            if (anchor.hasAttr("download")) score += 8
-            if (anchor.classNames().any { it.contains("document", ignoreCase = true) }) score += 6
-            if (lower.contains("download")) score += 4
-            if (expectedExt != null && lower.contains(".$expectedExt")) score += 10
-            if (looksLikeKnownFileUrl(lower)) score += 5
-            if (href == initialUrl) score -= 50
-
-            href to score
-        }.sortedByDescending { it.second }
-
-        val candidate = candidates.firstOrNull { it.second > 0 }?.first
-        if (candidate != null && candidate != initialUrl) {
-            return openResolvedDownload(candidate, title, depth + 1)
-        }
-
-        error("لینک تلگرام به فایل مستقیم تبدیل نشد. فایل را از پست اصلی دوباره امتحان کنید.")
-    }
-
-    private fun looksLikeKnownFileUrl(lowerUrl: String): Boolean {
-        val extensions = listOf(
-            ".pdf", ".zip", ".rar", ".7z", ".apk", ".xapk",
-            ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-            ".txt", ".csv", ".json", ".xml", ".epub",
-            ".mp3", ".m4a", ".ogg", ".wav", ".mp4", ".mkv", ".webm",
-            ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ): MediaAction {
+        val resolved = resolveMedia(
+            url = url,
+            title = title,
+            expectedMime = MediaSniffer.mimeFromName(title) ?: "audio/mpeg",
         )
-        return extensions.any { lowerUrl.contains(it) }
+        val action = mediaTypeRouter.route(resolved)
+        if (
+            action !is MediaAction.PlayAudioStream &&
+            action !is MediaAction.PlayAudioFile
+        ) {
+            throw MediaResolutionException.InvalidContent(
+                "فایل دریافتی صوت معتبر تشخیص داده نشد.",
+            )
+        }
+        return action
     }
 
     private fun proxySnapshot(): ProxySnapshot = ProxySnapshot(
@@ -749,42 +659,6 @@ class TelegramRepository(private val context: Context) {
             lower.contains(".mov") ||
             lower.contains("cdn") ||
             lower.contains("telegram-cdn")
-    }
-
-    private fun looksLikePdf(file: File): Boolean {
-        if (!file.exists() || file.length() < 5L) return false
-        return runCatching {
-            file.inputStream().buffered().use { input ->
-                val header = ByteArray(5)
-                if (input.read(header) != header.size) return@use false
-                String(header, Charsets.US_ASCII) == "%PDF-"
-            }
-        }.getOrDefault(false)
-    }
-
-    private fun trimPdfCache(dir: File) {
-        val files = dir.listFiles()
-            ?.filter { it.isFile && it.extension.equals("pdf", ignoreCase = true) }
-            ?.sortedBy { it.lastModified() }
-            ?.toMutableList()
-            ?: return
-
-        var total = files.sumOf { it.length() }
-        while (total > MAX_PDF_CACHE_BYTES && files.isNotEmpty()) {
-            val file = files.removeAt(0)
-            total -= file.length()
-            file.delete()
-        }
-    }
-
-    private fun sanitizeFileName(input: String): String =
-        input.replace(Regex("""[\\/:*?"<>|]"""), "_")
-            .take(120)
-            .ifBlank { "document.pdf" }
-
-    private fun sha256(value: String): String {
-        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
     }
 
     companion object {
