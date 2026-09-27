@@ -12,10 +12,14 @@ import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
 private const val PREFS = "telegram_reader_fa"
+private const val READER_BACKEND_BASE_URL = "https://reader.duckpsycho.dev"
+private val READER_HTML_MEDIA_ATTR =
+    Regex("""\b(src|poster)=(["'])([^"']+)\2""", RegexOption.IGNORE_CASE)
 
 private data class ProxySnapshot(
     val enabled: Boolean,
@@ -84,6 +88,190 @@ class TelegramRepository(private val context: Context) {
     }
 
     fun fetchPosts(channel: String, before: Long? = null): PostsPage {
+        // The upstream Telegram Reader does not connect to Telegram directly from Android.
+        // It calls its normal HTTPS REST backend and polls it periodically.  That backend
+        // retrieves public Telegram content server-side, so the Android client itself does
+        // not need a Telegram account, WebSocket, MTProto session or VPN.
+        val backendResult = runCatching {
+            fetchPostsFromReaderBackend(channel, before)
+        }
+        if (backendResult.isSuccess) {
+            return backendResult.getOrThrow()
+        }
+
+        // Keep our old Telegram Web parser as a fallback in case the reader backend is
+        // temporarily unavailable.
+        return fetchPostsFromTelegramWeb(channel, before)
+    }
+
+    private fun fetchPostsFromReaderBackend(
+        channel: String,
+        before: Long?,
+    ): PostsPage {
+        val encoded = java.net.URLEncoder
+            .encode(channel, Charsets.UTF_8.name())
+            .replace("+", "%20")
+
+        val url = buildString {
+            append(READER_BACKEND_BASE_URL)
+            append("/api/channels/")
+            append(encoded)
+            append("/posts")
+            if (before != null) {
+                append("?before=")
+                append(before)
+            }
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "en")
+            .header("User-Agent", USER_AGENT)
+            .get()
+            .build()
+
+        client().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                error("سرویس خوانش تلگرام پاسخ نداد: ${response.code}")
+            }
+
+            val raw = response.body?.string().orEmpty()
+            if (raw.isBlank()) error("پاسخ سرویس خوانش خالی بود.")
+
+            return parseReaderBackendPage(
+                json = JSONObject(raw),
+                requestedChannel = channel,
+            )
+        }
+    }
+
+    private fun parseReaderBackendPage(
+        json: JSONObject,
+        requestedChannel: String,
+    ): PostsPage {
+        val channelJson = json.optJSONObject("channel")
+        val channel = channelJson?.let { item ->
+            ChannelInfo(
+                username = item.optString("username").ifBlank { requestedChannel },
+                title = item.optString("title").ifBlank { requestedChannel },
+                description = item.optStringOrNull("description"),
+                subscriberCount = item.optStringOrNull("subscriberCount"),
+                photoUrl = normalizeReaderUrl(item.optStringOrNull("photoUrl")),
+            )
+        }
+
+        val postsJson = json.optJSONArray("posts")
+        val posts = buildList {
+            if (postsJson != null) {
+                for (index in 0 until postsJson.length()) {
+                    val item = postsJson.optJSONObject(index) ?: continue
+                    val id = item.optLong("id", -1L)
+                    if (id <= 0L) continue
+
+                    val media = mutableListOf<TelegramMedia>()
+
+                    item.optJSONObject("mediaGroup")
+                        ?.optJSONArray("items")
+                        ?.let { group ->
+                            for (mediaIndex in 0 until group.length()) {
+                                val mediaItem = group.optJSONObject(mediaIndex) ?: continue
+                                val mediaUrl = normalizeReaderUrl(
+                                    mediaItem.optStringOrNull("url"),
+                                ) ?: continue
+
+                                val kind = when (mediaItem.optString("type").lowercase()) {
+                                    "video" -> MediaKind.VIDEO
+                                    else -> MediaKind.PHOTO
+                                }
+                                media += TelegramMedia(kind = kind, url = mediaUrl)
+                            }
+                        }
+
+                    if (media.isEmpty()) {
+                        val mediaUrl = normalizeReaderUrl(
+                            item.optStringOrNull("mediaUrl"),
+                        )
+                        val mediaType = item.optStringOrNull("mediaType")?.lowercase()
+                        if (!mediaUrl.isNullOrBlank()) {
+                            val videoAttrs = item.optJSONObject("mediaVideoAttrs")
+                            val kind = when (mediaType) {
+                                "photo" -> MediaKind.PHOTO
+                                "sticker" -> MediaKind.STICKER
+                                "videosticker" -> MediaKind.GIF
+                                "video" -> {
+                                    if (videoAttrs?.optBoolean("autoplay", false) == true) {
+                                        MediaKind.GIF
+                                    } else {
+                                        MediaKind.VIDEO
+                                    }
+                                }
+                                else -> null
+                            }
+                            if (kind != null) {
+                                media += TelegramMedia(
+                                    kind = kind,
+                                    url = mediaUrl,
+                                )
+                            }
+                        }
+                    }
+
+                    val documents = buildList {
+                        item.optJSONObject("document")?.let { document ->
+                            val documentUrl = normalizeReaderUrl(
+                                document.optStringOrNull("url"),
+                            )
+                            if (!documentUrl.isNullOrBlank()) {
+                                add(
+                                    TelegramDocument(
+                                        title = document.optString("title")
+                                            .ifBlank { "فایل" },
+                                        extra = document.optStringOrNull("extra"),
+                                        url = documentUrl,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+
+                    add(
+                        TelegramPost(
+                            id = id,
+                            text = item.optStringOrNull("text").orEmpty(),
+                            html = absolutizeReaderHtml(
+                                item.optStringOrNull("html"),
+                            ),
+                            date = item.optStringOrNull("date").orEmpty(),
+                            views = item.optStringOrNull("views"),
+                            postUrl = "https://t.me/$requestedChannel/$id",
+                            forwardedFrom = item.optStringOrNull("forwardedFrom"),
+                            media = media.distinctBy { it.kind.name + "|" + it.url },
+                            documents = documents,
+                        ),
+                    )
+                }
+            }
+        }.sortedByDescending { it.id }
+
+        val nextBefore = if (json.has("nextBefore") && !json.isNull("nextBefore")) {
+            json.optLong("nextBefore").takeIf { it > 0L }
+        } else {
+            null
+        }
+
+        return PostsPage(
+            channel = channel,
+            posts = posts,
+            nextBefore = nextBefore,
+            hasMore = json.optBoolean("hasMore", nextBefore != null),
+        )
+    }
+
+    private fun fetchPostsFromTelegramWeb(
+        channel: String,
+        before: Long?,
+    ): PostsPage {
         val url = buildString {
             append("https://t.me/s/")
             append(channel)
@@ -103,7 +291,7 @@ class TelegramRepository(private val context: Context) {
             .build()
 
         client().newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("خطای شبکه: \${response.code}")
+            if (!response.isSuccessful) error("خطای شبکه: ${response.code}")
             val html = response.body?.string().orEmpty()
             if (html.isBlank()) error("پاسخی از تلگرام دریافت نشد.")
 
@@ -121,6 +309,32 @@ class TelegramRepository(private val context: Context) {
                 nextBefore = nextBefore,
                 hasMore = posts.size >= 10 && nextBefore != null,
             )
+        }
+    }
+
+    private fun JSONObject.optStringOrNull(key: String): String? {
+        if (!has(key) || isNull(key)) return null
+        return optString(key).takeIf { it.isNotBlank() }
+    }
+
+    private fun normalizeReaderUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        return when {
+            url.startsWith("http://") || url.startsWith("https://") -> url
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> READER_BACKEND_BASE_URL + url
+            else -> url
+        }
+    }
+
+    private fun absolutizeReaderHtml(html: String?): String? {
+        if (html.isNullOrBlank()) return html
+        return READER_HTML_MEDIA_ATTR.replace(html) { match ->
+            val attr = match.groupValues[1]
+            val quote = match.groupValues[2]
+            val rawUrl = match.groupValues[3]
+            val absolute = normalizeReaderUrl(rawUrl) ?: rawUrl
+            "$attr=$quote$absolute$quote"
         }
     }
 
