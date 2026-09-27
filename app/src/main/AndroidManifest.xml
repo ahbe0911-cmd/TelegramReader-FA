@@ -4,10 +4,17 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="تلگرام‌خوان فارسی"
         android:supportsRtl="true"
         android:theme="@style/Theme.TelegramReaderFA"
         android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".PdfReaderActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TelegramReaderFA.Pdf" />
 
         <activity
             android:name=".MainActivity"
@@ -17,6 +24,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 </manifest>
