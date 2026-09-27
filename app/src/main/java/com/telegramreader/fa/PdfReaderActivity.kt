@@ -34,6 +34,7 @@ class PdfReaderActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private var sourceUrl: String = ""
     private var documentTitle: String = "document.pdf"
+    private var currentPdfFile: File? = null
 
     private val savePdf = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/pdf"),
@@ -125,6 +126,12 @@ class PdfReaderActivity : AppCompatActivity() {
             }
         }
 
+        val external = Button(this).apply {
+            text = "برنامه دیگر"
+            isAllCaps = false
+            setOnClickListener { openWithExternalViewer() }
+        }
+
         toolbar.addView(
             back,
             LinearLayout.LayoutParams(
@@ -145,6 +152,14 @@ class PdfReaderActivity : AppCompatActivity() {
         )
         toolbar.addView(
             download,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+
+        toolbar.addView(
+            external,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -226,6 +241,7 @@ class PdfReaderActivity : AppCompatActivity() {
             }
 
             fileResult.onSuccess { file ->
+                currentPdfFile = file
                 setStatus("", false)
                 if (supportsAndroidXViewer()) {
                     showWithAndroidX(file)
@@ -295,6 +311,47 @@ class PdfReaderActivity : AppCompatActivity() {
                 )
             }
             .load()
+    }
+
+    private fun openWithExternalViewer() {
+        lifecycleScope.launch {
+            setStatus("در حال آماده‌سازی فایل…", true)
+            val fileResult = runCatching {
+                currentPdfFile ?: withContext(Dispatchers.IO) {
+                    repository.downloadPdf(sourceUrl, documentTitle)
+                }
+            }
+
+            fileResult.onSuccess { file ->
+                currentPdfFile = file
+                setStatus("", false)
+                val uri = FileProvider.getUriForFile(
+                    this@PdfReaderActivity,
+                    "$packageName.fileprovider",
+                    file,
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/pdf")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                runCatching {
+                    startActivity(Intent.createChooser(intent, "باز کردن PDF با"))
+                }.onFailure {
+                    Toast.makeText(
+                        this@PdfReaderActivity,
+                        "برنامه دیگری برای PDF پیدا نشد.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }.onFailure {
+                setStatus("", false)
+                Toast.makeText(
+                    this@PdfReaderActivity,
+                    it.message ?: "آماده‌سازی PDF ناموفق بود.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
 
     private fun showFatalError(message: String) {
