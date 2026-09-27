@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +16,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -23,12 +26,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,7 +61,10 @@ import coil.request.ImageRequest
 import com.github.barteksc.pdfviewer.PDFView
 import com.telegramreader.fa.data.TelegramRepository
 import java.io.File
+import android.net.Uri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
@@ -226,6 +237,173 @@ fun VideoMedia(
             .clip(RoundedCornerShape(18.dp))
             .background(Color.Black),
     )
+}
+
+@Composable
+fun AudioDocumentPlayer(
+    repository: TelegramRepository,
+    url: String,
+    title: String,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val fileState by produceState<Result<File>?>(initialValue = null, url, title) {
+        value = runCatching {
+            withContext(Dispatchers.IO) {
+                repository.downloadFileToCache(url, title)
+            }
+        }
+    }
+
+    when (val result = fileState) {
+        null -> Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            ),
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.size(12.dp))
+                Column {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "در حال آماده‌سازی فایل صوتی…",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+
+        else -> result.fold(
+            onSuccess = { file ->
+                val player = remember(file.absolutePath) {
+                    ExoPlayer.Builder(context).build().apply {
+                        setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+                        prepare()
+                    }
+                }
+                var isPlaying by remember(player) { mutableStateOf(false) }
+                var position by remember(player) { mutableLongStateOf(0L) }
+                var duration by remember(player) { mutableLongStateOf(0L) }
+
+                DisposableEffect(player) {
+                    val listener = object : Player.Listener {
+                        override fun onIsPlayingChanged(playing: Boolean) {
+                            isPlaying = playing
+                        }
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            if (playbackState == Player.STATE_READY) {
+                                duration = player.duration.coerceAtLeast(0L)
+                            }
+                        }
+                    }
+                    player.addListener(listener)
+                    onDispose {
+                        player.removeListener(listener)
+                        player.release()
+                    }
+                }
+
+                LaunchedEffect(player, isPlaying) {
+                    while (isActive) {
+                        position = player.currentPosition.coerceAtLeast(0L)
+                        duration = player.duration.coerceAtLeast(0L)
+                        delay(if (isPlaying) 350L else 800L)
+                    }
+                }
+
+                Card(
+                    modifier = modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    if (player.isPlaying) player.pause() else player.play()
+                                },
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.primary,
+                                        CircleShape,
+                                    ),
+                            ) {
+                                Icon(
+                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "توقف" else "پخش",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                )
+                            }
+                            Spacer(Modifier.size(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    "پخش داخل برنامه",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                            }
+                            Text(
+                                "${formatMediaTime(position)} / ${formatMediaTime(duration)}",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        Slider(
+                            value = if (duration > 0L) {
+                                (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                            } else 0f,
+                            onValueChange = { fraction ->
+                                if (duration > 0L) {
+                                    player.seekTo((duration * fraction).toLong())
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            },
+            onFailure = { error ->
+                Card(
+                    modifier = modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Text(
+                        error.message ?: "فایل صوتی قابل پخش نیست.",
+                        modifier = Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            },
+        )
+    }
+}
+
+private fun formatMediaTime(ms: Long): String {
+    val totalSeconds = (ms.coerceAtLeast(0L) / 1000L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return "%d:%02d".format(minutes, seconds)
 }
 
 /**
