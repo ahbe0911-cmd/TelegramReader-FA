@@ -677,7 +677,7 @@ private fun FeedScreen(
         if (!networkAvailable) return@LaunchedEffect
 
         while (isActive) {
-            delay(45_000L)
+            delay(60_000L)
             val fresh = runCatching {
                 withContext(Dispatchers.IO) {
                     repository.fetchPosts(channel)
