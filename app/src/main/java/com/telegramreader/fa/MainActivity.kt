@@ -1081,11 +1081,10 @@ private fun PostCard(
                 Text(
                     post.text,
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontFamily = Rooznameh,
-                        fontSize = 17.sp,
-                        lineHeight = 23.sp,
+                        fontSize = 16.sp,
+                        lineHeight = 28.sp,
                     ),
-                    textAlign = if (post.text.length >= 220) TextAlign.Justify else TextAlign.Right,
+                    textAlign = TextAlign.Justify,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 2.dp),
@@ -1274,9 +1273,9 @@ private fun DocumentCard(
 
                 Text(
                     text = when (document.kind) {
-                        DocumentKind.PDF -> "PDF داخل برنامه"
-                        DocumentKind.AUDIO -> "پخش داخل برنامه"
-                        DocumentKind.PACKAGE -> "نصب یا ذخیره APK"
+                        DocumentKind.PDF -> "نمایش داخل برنامه • دانلود PDF"
+                        DocumentKind.AUDIO -> "پخش داخل برنامه • دانلود صوت"
+                        DocumentKind.PACKAGE -> "نصب یا دانلود APK"
                         DocumentKind.ARCHIVE -> "دانلود یا باز کردن"
                         DocumentKind.OFFICE -> "دانلود یا باز کردن"
                         else -> "دانلود یا باز کردن"
@@ -1333,8 +1332,8 @@ private fun RichPostText(html: String) {
     val context = LocalContext.current
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val linkColor = MaterialTheme.colorScheme.primary.toArgb()
-    val rooznameh = remember {
-        ResourcesCompat.getFont(context, R.font.a_rooznameh)
+    val vazirmatn = remember {
+        ResourcesCompat.getFont(context, R.font.vazirmatn_regular)
     }
 
     AndroidView(
@@ -1348,34 +1347,24 @@ private fun RichPostText(html: String) {
                 textAlignment = View.TEXT_ALIGNMENT_VIEW_END
                 gravity = Gravity.END or Gravity.TOP
                 includeFontPadding = false
-                breakStrategy = Layout.BREAK_STRATEGY_BALANCED
-                hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
+                breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
+                hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL
                 movementMethod = LinkMovementMethod.getInstance()
                 linksClickable = true
                 setTextIsSelectable(true)
-                setLineSpacing(0f, 1.02f)
-                textSize = 16.8f
+                setLineSpacing(0f, 1.10f)
+                textSize = 16f
             }
         },
         update = { view ->
             val richText = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
             view.text = richText
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val plainLength = richText.toString().trim().length
-                val wordCount = richText.toString()
-                    .trim()
-                    .split(Regex("\\s+"))
-                    .count { it.isNotBlank() }
-                view.justificationMode =
-                    if (plainLength >= 220 && wordCount >= 32) {
-                        Layout.JUSTIFICATION_MODE_INTER_WORD
-                    } else {
-                        Layout.JUSTIFICATION_MODE_NONE
-                    }
+                view.justificationMode = Layout.JUSTIFICATION_MODE_INTER_WORD
             }
             view.setTextColor(textColor)
             view.setLinkTextColor(linkColor)
-            view.typeface = Typeface.create(rooznameh, Typeface.NORMAL)
+            view.typeface = Typeface.create(vazirmatn, Typeface.NORMAL)
         },
     )
 }
