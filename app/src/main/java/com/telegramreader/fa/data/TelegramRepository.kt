@@ -392,6 +392,55 @@ class TelegramRepository(private val context: Context) {
         } ?: error("محل ذخیره فایل قابل دسترسی نیست.")
     }
 
+    fun downloadFileToCache(
+        url: String,
+        title: String,
+    ): File {
+        val safeName = sanitizeFileName(title.ifBlank { "telegram-file" })
+        val key = sha256(url).take(24)
+        val dir = File(context.cacheDir, "documents").also { it.mkdirs() }
+        val target = File(dir, "${key}_$safeName")
+
+        if (target.exists() && target.length() > 0L) {
+            target.setLastModified(System.currentTimeMillis())
+            return target
+        }
+
+        val temp = File(dir, "$key.part").also { it.delete() }
+        openResolvedDownload(url, title).use { response ->
+            val body = response.body ?: error("فایل خالی است.")
+            temp.outputStream().buffered().use { output ->
+                body.byteStream().buffered().use { input ->
+                    input.copyTo(output)
+                }
+            }
+        }
+
+        if (target.exists()) target.delete()
+        if (!temp.renameTo(target)) {
+            temp.copyTo(target, overwrite = true)
+            temp.delete()
+        }
+
+        trimDocumentCache(dir)
+        return target
+    }
+
+    private fun trimDocumentCache(dir: File) {
+        val files = dir.listFiles()
+            ?.filter { it.isFile && !it.name.endsWith(".part") }
+            ?.sortedBy { it.lastModified() }
+            ?.toMutableList()
+            ?: return
+
+        var total = files.sumOf { it.length() }
+        while (total > MAX_DOCUMENT_CACHE_BYTES && files.isNotEmpty()) {
+            val file = files.removeAt(0)
+            total -= file.length()
+            file.delete()
+        }
+    }
+
     private fun downloadToFile(
         url: String,
         title: String,
@@ -710,6 +759,7 @@ class TelegramRepository(private val context: Context) {
     }
 
     companion object {
+        private const val MAX_DOCUMENT_CACHE_BYTES = 512L * 1024L * 1024L
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Mobile Safari/537.36"
 
