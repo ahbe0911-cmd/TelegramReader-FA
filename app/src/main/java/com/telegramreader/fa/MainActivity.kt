@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.os.Build
 import android.text.Layout
@@ -75,6 +78,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -111,6 +115,8 @@ import com.telegramreader.fa.ui.StickerMedia
 import com.telegramreader.fa.ui.VideoMedia
 import com.telegramreader.fa.ui.theme.TelegramReaderTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -610,22 +616,86 @@ private fun FeedScreen(
     }
 
     val httpClient = remember(channel, refreshKey) { repository.client() }
+    val networkAvailable = rememberNetworkAvailable()
 
-    LaunchedEffect(channel, refreshKey) {
-        loading = true
-        error = null
-
-        runCatching {
-            withContext(Dispatchers.IO) {
-                repository.fetchPosts(channel)
+    suspend fun fetchFirstPageWithRetry(): Result<PostsPage> {
+        var lastError: Throwable? = null
+        repeat(3) { attempt ->
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.fetchPosts(channel)
+                }
             }
-        }.onSuccess {
-            pageData = it
-        }.onFailure {
-            error = it.message ?: "خطا در دریافت اطلاعات"
+            if (result.isSuccess) return result
+            lastError = result.exceptionOrNull()
+            if (attempt < 2) {
+                delay(700L * (attempt + 1))
+            }
+        }
+        return Result.failure(
+            lastError ?: IllegalStateException("اتصال به تلگرام برقرار نشد."),
+        )
+    }
+
+    LaunchedEffect(channel, refreshKey, networkAvailable) {
+        if (!networkAvailable) {
+            if (pageData == null) {
+                loading = false
+                error = "اینترنت در دسترس نیست. پس از وصل‌شدن، برنامه خودکار دوباره تلاش می‌کند."
+            }
+            return@LaunchedEffect
         }
 
+        loading = pageData == null
+        error = null
+
+        fetchFirstPageWithRetry()
+            .onSuccess { fresh ->
+                val current = pageData
+                pageData = if (current == null) {
+                    fresh
+                } else {
+                    current.copy(
+                        channel = fresh.channel ?: current.channel,
+                        posts = (fresh.posts + current.posts)
+                            .distinctBy { it.id }
+                            .sortedByDescending { it.id },
+                    )
+                }
+            }
+            .onFailure {
+                error = it.message ?: "خطا در دریافت اطلاعات"
+            }
+
         loading = false
+    }
+
+    // While this feed is visible, keep it warm without requiring any account/login.
+    // If connectivity drops, the effect stops; when Android reports the network back,
+    // the LaunchedEffect above reconnects and refreshes automatically.
+    LaunchedEffect(channel, networkAvailable) {
+        if (!networkAvailable) return@LaunchedEffect
+
+        while (isActive) {
+            delay(45_000L)
+            val fresh = runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.fetchPosts(channel)
+                }
+            }.getOrNull() ?: continue
+
+            val current = pageData
+            pageData = if (current == null) {
+                fresh
+            } else {
+                current.copy(
+                    channel = fresh.channel ?: current.channel,
+                    posts = (fresh.posts + current.posts)
+                        .distinctBy { it.id }
+                        .sortedByDescending { it.id },
+                )
+            }
+        }
     }
 
     when {
@@ -1412,6 +1482,56 @@ private fun mimeTypeForDocument(document: TelegramDocument): String {
         else -> "application/octet-stream"
     }
 }
+
+@Composable
+private fun rememberNetworkAvailable(): Boolean {
+    val context = LocalContext.current
+    val connectivityManager = remember(context) {
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+
+    fun currentStatus(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    var available by remember { mutableStateOf(currentStatus()) }
+
+    DisposableEffect(connectivityManager) {
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                available = true
+            }
+
+            override fun onLost(network: Network) {
+                available = currentStatus()
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) {
+                available =
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            }
+        }
+
+        connectivityManager.registerDefaultNetworkCallback(callback)
+        available = currentStatus()
+
+        onDispose {
+            runCatching {
+                connectivityManager.unregisterNetworkCallback(callback)
+            }
+        }
+    }
+
+    return available
+}
+
 
 private fun normalizeChannel(raw: String): String =
     raw.trim()
