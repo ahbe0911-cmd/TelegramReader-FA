@@ -1,6 +1,7 @@
 package com.telegramreader.fa.data
 
 import android.content.Context
+import android.net.Uri
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -130,49 +131,28 @@ class TelegramRepository(private val context: Context) {
 
         val key = sha256(url).take(20)
         val dir = File(context.cacheDir, "pdf").also { it.mkdirs() }
-        val target = File(dir, "\${key}_$safeName")
+        val target = File(dir, "${key}_$safeName")
 
         if (target.exists() && target.length() > 5L && looksLikePdf(target)) {
             target.setLastModified(System.currentTimeMillis())
             return target
         }
 
-        if (target.exists()) target.delete()
-        val temp = File(dir, "$key.download")
-        if (temp.exists()) temp.delete()
+        target.delete()
+        val temp = File(dir, "$key.download").also { it.delete() }
 
-        val request = Request.Builder()
-            .url(url)
-            .header("Accept", "application/pdf,application/octet-stream;q=0.9,*/*;q=0.5")
-            .header("Referer", "https://t.me/")
-            .header("User-Agent", USER_AGENT)
-            .get()
-            .build()
-
-        client().newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("دانلود PDF ناموفق بود: \${response.code}")
-            }
-
-            val body = response.body ?: error("فایل PDF خالی است.")
-            val contentLength = body.contentLength()
-            if (contentLength > MAX_PDF_BYTES) {
-                error("حجم PDF برای نمایش داخل برنامه بیش از حد زیاد است.")
-            }
-
-            temp.outputStream().buffered().use { output ->
-                body.byteStream().buffered().use { input ->
-                    input.copyTo(output)
-                }
-            }
-        }
+        downloadToFile(
+            url = url,
+            title = safeName,
+            target = temp,
+            expectedPdf = true,
+        )
 
         if (!looksLikePdf(temp)) {
             temp.delete()
-            error("لینک این فایل، PDF مستقیم برنگرداند. می‌توانید فایل را با برنامه دیگری باز کنید.")
+            error("فایل دریافت‌شده PDF معتبر نیست.")
         }
 
-        if (target.exists()) target.delete()
         if (!temp.renameTo(target)) {
             temp.copyTo(target, overwrite = true)
             temp.delete()
@@ -180,6 +160,113 @@ class TelegramRepository(private val context: Context) {
 
         trimPdfCache(dir)
         return target
+    }
+
+    fun downloadFileToUri(
+        url: String,
+        title: String,
+        destination: Uri,
+    ) {
+        val resolver = context.contentResolver
+        resolver.openOutputStream(destination, "w")?.buffered()?.use { output ->
+            openResolvedDownload(url, title).use { response ->
+                val body = response.body ?: error("فایل خالی است.")
+                body.byteStream().buffered().use { input ->
+                    input.copyTo(output)
+                }
+            }
+        } ?: error("محل ذخیره فایل قابل دسترسی نیست.")
+    }
+
+    private fun downloadToFile(
+        url: String,
+        title: String,
+        target: File,
+        expectedPdf: Boolean,
+    ) {
+        openResolvedDownload(url, title).use { response ->
+            val body = response.body ?: error("فایل خالی است.")
+            val contentLength = body.contentLength()
+
+            if (expectedPdf && contentLength > MAX_PDF_BYTES) {
+                error("حجم PDF برای نمایش داخل برنامه بیش از حد زیاد است.")
+            }
+
+            target.outputStream().buffered().use { output ->
+                body.byteStream().buffered().use { input ->
+                    input.copyTo(output)
+                }
+            }
+        }
+    }
+
+    private fun openResolvedDownload(
+        initialUrl: String,
+        title: String,
+        depth: Int = 0,
+    ): okhttp3.Response {
+        val request = Request.Builder()
+            .url(initialUrl)
+            .header("Accept", "*/*")
+            .header("Referer", "https://t.me/")
+            .header("User-Agent", USER_AGENT)
+            .get()
+            .build()
+
+        val response = client().newCall(request).execute()
+        if (!response.isSuccessful) {
+            val code = response.code
+            response.close()
+            error("دانلود فایل ناموفق بود: $code")
+        }
+
+        val type = response.header("Content-Type").orEmpty().lowercase()
+        val isHtml = type.contains("text/html") || type.contains("application/xhtml")
+        if (!isHtml || depth >= 2) return response
+
+        val body = response.body ?: return response
+        val html = body.string()
+        val baseUrl = response.request.url.toString()
+        response.close()
+
+        val expectedExt = title.substringAfterLast('.', "")
+            .lowercase()
+            .takeIf { it.length in 2..8 }
+
+        val document = Jsoup.parse(html, baseUrl)
+        val candidates = document.select("a[href]").mapNotNull { anchor ->
+            val href = anchor.absUrl("href").ifBlank { null } ?: return@mapNotNull null
+            if (!href.startsWith("http")) return@mapNotNull null
+
+            val lower = href.lowercase()
+            var score = 0
+            if (anchor.hasAttr("download")) score += 8
+            if (anchor.classNames().any { it.contains("document", ignoreCase = true) }) score += 6
+            if (lower.contains("download")) score += 4
+            if (expectedExt != null && lower.contains(".$expectedExt")) score += 10
+            if (looksLikeKnownFileUrl(lower)) score += 5
+            if (href == initialUrl) score -= 50
+
+            href to score
+        }.sortedByDescending { it.second }
+
+        val candidate = candidates.firstOrNull { it.second > 0 }?.first
+        if (candidate != null && candidate != initialUrl) {
+            return openResolvedDownload(candidate, title, depth + 1)
+        }
+
+        error("لینک تلگرام به فایل مستقیم تبدیل نشد. فایل را از پست اصلی دوباره امتحان کنید.")
+    }
+
+    private fun looksLikeKnownFileUrl(lowerUrl: String): Boolean {
+        val extensions = listOf(
+            ".pdf", ".zip", ".rar", ".7z", ".apk", ".xapk",
+            ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".txt", ".csv", ".json", ".xml", ".epub",
+            ".mp3", ".m4a", ".ogg", ".wav", ".mp4", ".mkv", ".webm",
+            ".jpg", ".jpeg", ".png", ".webp", ".gif",
+        )
+        return extensions.any { lowerUrl.contains(it) }
     }
 
     private fun proxySnapshot(): ProxySnapshot = ProxySnapshot(
