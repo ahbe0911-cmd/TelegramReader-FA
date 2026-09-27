@@ -445,7 +445,7 @@ private fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         ChannelAvatar(channel)
-                        Spacer(Modifier.size(11.dp))
+                        Spacer(Modifier.size(9.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 "@$channel",
@@ -740,7 +740,7 @@ private fun FeedScreen(
                     top = 6.dp,
                     bottom = 24.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 items(
                     items = current.posts,
@@ -1031,7 +1031,7 @@ private fun PostCard(
                             .padding(horizontal = 4.dp, vertical = 3.dp),
                         textAlign = TextAlign.Right,
                     )
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(4.dp))
                 }
 
             post.media.forEachIndexed { index, media ->
@@ -1065,7 +1065,7 @@ private fun PostCard(
             }
 
             if (post.media.isNotEmpty() && (post.text.isNotBlank() || post.html != null)) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
             }
 
             if (!post.html.isNullOrBlank()) {
@@ -1197,12 +1197,12 @@ private fun DocumentCard(
         colors = CardDefaults.cardColors(
             containerColor = accent.copy(alpha = 0.11f),
         ),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(13.dp),
+                .padding(horizontal = 10.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -1246,7 +1246,7 @@ private fun DocumentCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Spacer(Modifier.height(3.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
                     when (document.kind) {
                         DocumentKind.PDF -> "نمایش PDF داخل برنامه"
