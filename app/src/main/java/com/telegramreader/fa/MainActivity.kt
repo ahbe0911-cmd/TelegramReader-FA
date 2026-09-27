@@ -1581,7 +1581,18 @@ private fun mimeTypeForDocument(document: TelegramDocument): String {
         source.contains(".png") -> "image/png"
         source.contains(".webp") -> "image/webp"
         source.contains(".mp4") -> "video/mp4"
+        source.contains(".mkv") -> "video/x-matroska"
+        source.contains(".webm") -> "video/webm"
+        source.contains(".mov") -> "video/quicktime"
         source.contains(".mp3") -> "audio/mpeg"
+        source.contains(".m4a") -> "audio/mp4"
+        source.contains(".aac") -> "audio/aac"
+        source.contains(".ogg") || source.contains(".opus") -> "audio/ogg"
+        source.contains(".wav") -> "audio/wav"
+        source.contains(".flac") -> "audio/flac"
+        source.contains(".gif") -> "image/gif"
+        source.contains(".json") -> "application/json"
+        source.contains(".xml") -> "application/xml"
         else -> "application/octet-stream"
     }
 }
