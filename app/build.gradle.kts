@@ -1,3 +1,6 @@
+import java.io.File
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -62,8 +65,8 @@ val downloadVazirmatnFonts by tasks.registering {
             val target = vazirmatnFontDir.file(name).asFile
             if (!target.exists() || target.length() < 50_000L) {
                 logger.lifecycle("Downloading Vazirmatn font: $name")
-                val temp = java.io.File(target.parentFile, "$name.tmp")
-                java.net.URI(source).toURL().openStream().use { input ->
+                val temp = File(target.parentFile, "$name.tmp")
+                URI(source).toURL().openStream().use { input ->
                     temp.outputStream().use { output -> input.copyTo(output) }
                 }
                 if (target.exists()) target.delete()
