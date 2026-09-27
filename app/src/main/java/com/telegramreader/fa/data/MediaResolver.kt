@@ -247,7 +247,7 @@ class MediaResolver(
         clientProvider().newCall(request).execute().use { response ->
             val bytes = response.body?.byteStream()?.use {
                 readAtMost(it, PROBE_BYTES)
-            }.orEmpty()
+            } ?: byteArrayOf()
 
             val type = MediaSniffer.normalizeContentType(
                 response.header("Content-Type"),
@@ -432,9 +432,14 @@ class MediaResolver(
 
         document.select("meta[http-equiv=refresh]").forEach { meta ->
             val content = meta.attr("content")
-            val candidate = content.substringAfter("url=", "", ignoreCase = true)
-                .trim()
-                .trim('"', '\'')
+            val candidate = Regex(
+                """(?i)url\\s*=\\s*(.+)$""",
+            ).find(content)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.trim('"', '\'')
+                .orEmpty()
             if (candidate.isNotBlank()) {
                 return document.baseUri()
                     .toHttpUrlOrNull()
