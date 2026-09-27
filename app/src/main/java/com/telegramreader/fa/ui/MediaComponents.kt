@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -61,7 +62,6 @@ import coil.request.ImageRequest
 import com.github.barteksc.pdfviewer.PDFView
 import com.telegramreader.fa.data.TelegramRepository
 import java.io.File
-import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -247,155 +247,143 @@ fun AudioDocumentPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val fileState by produceState<Result<File>?>(initialValue = null, url, title) {
-        value = runCatching {
-            withContext(Dispatchers.IO) {
-                repository.downloadFileToCache(url, title)
+    val httpClient = remember(url) { repository.client() }
+    var failedMessage by remember(url) { mutableStateOf<String?>(null) }
+
+    val player = remember(url, httpClient) {
+        val dataSourceFactory = OkHttpDataSource.Factory(httpClient)
+            .setDefaultRequestProperties(
+                mapOf(
+                    "User-Agent" to TelegramRepository.USER_AGENT,
+                    "Referer" to "https://reader.duckpsycho.dev/",
+                    "Accept" to "*/*",
+                ),
+            )
+        val source = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(MediaItem.fromUri(url))
+
+        ExoPlayer.Builder(context)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        2_000,
+                        45_000,
+                        350,
+                        900,
+                    )
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build(),
+            )
+            .build()
+            .apply {
+                setMediaSource(source)
+                prepare()
             }
+    }
+
+    var isPlaying by remember(player) { mutableStateOf(false) }
+    var position by remember(player) { mutableLongStateOf(0L) }
+    var duration by remember(player) { mutableLongStateOf(0L) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    duration = player.duration.coerceAtLeast(0L)
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                failedMessage = error.localizedMessage ?: "پخش فایل صوتی ممکن نشد."
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
         }
     }
 
-    when (val result = fileState) {
-        null -> Card(
-            modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            ),
-        ) {
+    LaunchedEffect(player, isPlaying) {
+        while (isActive) {
+            position = player.currentPosition.coerceAtLeast(0L)
+            duration = player.duration.coerceAtLeast(0L)
+            delay(if (isPlaying) 350L else 800L)
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (failedMessage == null) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.errorContainer
+            },
+        ),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(
-                modifier = Modifier.padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(28.dp),
-                    strokeWidth = 2.dp,
+                IconButton(
+                    onClick = {
+                        if (player.isPlaying) player.pause() else player.play()
+                    },
+                    enabled = failedMessage == null,
+                    modifier = Modifier
+                        .size(46.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            CircleShape,
+                        ),
+                ) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "توقف" else "پخش",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                    )
+                    Text(
+                        failedMessage ?: "پخش مستقیم داخل برنامه",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (failedMessage == null) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        },
+                    )
+                }
+                Text(
+                    "${formatMediaTime(position)} / ${formatMediaTime(duration)}",
+                    style = MaterialTheme.typography.labelSmall,
                 )
-                Spacer(Modifier.size(12.dp))
-                Column {
-                    Text(title, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "در حال آماده‌سازی فایل صوتی…",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
             }
+            Slider(
+                value = if (duration > 0L) {
+                    (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                } else 0f,
+                onValueChange = { fraction ->
+                    if (duration > 0L) {
+                        player.seekTo((duration * fraction).toLong())
+                    }
+                },
+                enabled = failedMessage == null,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
-
-        else -> result.fold(
-            onSuccess = { file ->
-                val player = remember(file.absolutePath) {
-                    ExoPlayer.Builder(context).build().apply {
-                        setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-                        prepare()
-                    }
-                }
-                var isPlaying by remember(player) { mutableStateOf(false) }
-                var position by remember(player) { mutableLongStateOf(0L) }
-                var duration by remember(player) { mutableLongStateOf(0L) }
-
-                DisposableEffect(player) {
-                    val listener = object : Player.Listener {
-                        override fun onIsPlayingChanged(playing: Boolean) {
-                            isPlaying = playing
-                        }
-                        override fun onPlaybackStateChanged(playbackState: Int) {
-                            if (playbackState == Player.STATE_READY) {
-                                duration = player.duration.coerceAtLeast(0L)
-                            }
-                        }
-                    }
-                    player.addListener(listener)
-                    onDispose {
-                        player.removeListener(listener)
-                        player.release()
-                    }
-                }
-
-                LaunchedEffect(player, isPlaying) {
-                    while (isActive) {
-                        position = player.currentPosition.coerceAtLeast(0L)
-                        duration = player.duration.coerceAtLeast(0L)
-                        delay(if (isPlaying) 350L else 800L)
-                    }
-                }
-
-                Card(
-                    modifier = modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    ),
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    if (player.isPlaying) player.pause() else player.play()
-                                },
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .background(
-                                        MaterialTheme.colorScheme.primary,
-                                        CircleShape,
-                                    ),
-                            ) {
-                                Icon(
-                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) "توقف" else "پخش",
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                )
-                            }
-                            Spacer(Modifier.size(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    title,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1,
-                                )
-                                Text(
-                                    "پخش داخل برنامه",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                )
-                            }
-                            Text(
-                                "${formatMediaTime(position)} / ${formatMediaTime(duration)}",
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                        Slider(
-                            value = if (duration > 0L) {
-                                (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                            } else 0f,
-                            onValueChange = { fraction ->
-                                if (duration > 0L) {
-                                    player.seekTo((duration * fraction).toLong())
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-            },
-            onFailure = { error ->
-                Card(
-                    modifier = modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
-                ) {
-                    Text(
-                        error.message ?: "فایل صوتی قابل پخش نیست.",
-                        modifier = Modifier.padding(14.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                }
-            },
-        )
     }
 }
 
