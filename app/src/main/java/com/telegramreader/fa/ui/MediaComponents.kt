@@ -193,14 +193,14 @@ fun VideoMedia(
 
         ExoPlayer.Builder(context)
             .setLoadControl(loadControl)
+            .setSeekBackIncrementMs(10_000)
+            .setSeekForwardIncrementMs(10_000)
             .build()
             .apply {
                 setMediaSource(source)
                 repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 volume = if (muted) 0f else 1f
                 playWhenReady = autoplay
-                setSeekBackIncrementMs(10_000)
-                setSeekForwardIncrementMs(10_000)
                 prepare()
             }
     }
