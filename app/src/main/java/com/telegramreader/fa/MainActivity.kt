@@ -12,9 +12,12 @@ import android.view.View
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,18 +33,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -56,10 +65,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -74,17 +80,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.intl.Locale
-import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.res.ResourcesCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.telegramreader.fa.data.ChannelInfo
@@ -98,17 +104,25 @@ import com.telegramreader.fa.ui.PdfViewer
 import com.telegramreader.fa.ui.PhotoMedia
 import com.telegramreader.fa.ui.StickerMedia
 import com.telegramreader.fa.ui.VideoMedia
+import com.telegramreader.fa.ui.theme.TelegramReaderTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import java.util.Locale
 
 private const val PREFS = "telegram_reader_fa"
 private const val CHANNELS = "channels"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        Locale.setDefault(Locale("fa", "IR"))
         super.onCreate(savedInstanceState)
-        setContent { TelegramReaderApp() }
+        window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        setContent {
+            TelegramReaderApp()
+        }
     }
 }
 
@@ -127,32 +141,26 @@ fun TelegramReaderApp() {
     var darkMode by rememberSaveable {
         mutableStateOf(prefs.getBoolean("dark_mode", false))
     }
-    var serifFont by rememberSaveable {
-        mutableStateOf(prefs.getBoolean("serif_font", false))
-    }
     var page by rememberSaveable { mutableStateOf("home") }
     var selectedChannel by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPdf by remember { mutableStateOf<TelegramDocument?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var feedRefreshKey by remember { mutableIntStateOf(0) }
 
-    val typography = remember(serifFont) { persianTypography(serifFont) }
-
-    MaterialTheme(
-        colorScheme = if (darkMode) darkColorScheme() else lightColorScheme(),
-        typography = typography,
-    ) {
+    TelegramReaderTheme(darkTheme = darkMode) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
                 topBar = {
-                    TopAppBar(
+                    CenterAlignedTopAppBar(
                         title = {
                             Text(
                                 when (page) {
                                     "feed" -> selectedChannel?.let { "@$it" } ?: "کانال"
-                                    "pdf" -> selectedPdf?.title ?: "PDF"
+                                    "pdf" -> selectedPdf?.title ?: "نمایش PDF"
                                     else -> "تلگرام‌خوان فارسی"
                                 },
+                                fontWeight = FontWeight.SemiBold,
                             )
                         },
                         navigationIcon = {
@@ -160,36 +168,54 @@ fun TelegramReaderApp() {
                                 IconButton(
                                     onClick = {
                                         if (page == "pdf") {
-                                            page = "feed"
                                             selectedPdf = null
+                                            page = "feed"
                                         } else {
                                             page = "channels"
                                         }
                                     },
                                 ) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "بازگشت")
+                                    Icon(
+                                        Icons.Default.ArrowBack,
+                                        contentDescription = "بازگشت",
+                                    )
                                 }
                             }
                         },
                         actions = {
                             if (page == "feed") {
                                 IconButton(onClick = { feedRefreshKey++ }) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "تازه‌سازی")
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        contentDescription = "تازه‌سازی",
+                                    )
                                 }
                             }
+
                             if (page == "pdf" && selectedPdf != null) {
                                 IconButton(
-                                    onClick = { openExternal(context, selectedPdf!!.url) },
+                                    onClick = {
+                                        openExternal(context, selectedPdf!!.url)
+                                    },
                                 ) {
-                                    Icon(Icons.Default.OpenInNew, contentDescription = "باز کردن بیرونی")
+                                    Icon(
+                                        Icons.Default.OpenInNew,
+                                        contentDescription = "باز کردن با برنامه دیگر",
+                                    )
                                 }
                             }
                         },
+                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.background,
+                        ),
                     )
                 },
                 bottomBar = {
                     if (page != "feed" && page != "pdf") {
-                        NavigationBar {
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 6.dp,
+                        ) {
                             NavigationBarItem(
                                 selected = page == "home",
                                 onClick = { page = "home" },
@@ -218,11 +244,11 @@ fun TelegramReaderApp() {
                         }
                     }
                 },
-            ) { padding ->
+            ) { innerPadding ->
                 Box(
-                    Modifier
+                    modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding),
+                        .padding(innerPadding),
                 ) {
                     when (page) {
                         "home" -> HomeScreen(
@@ -242,20 +268,18 @@ fun TelegramReaderApp() {
                             },
                             onRemove = { channel ->
                                 channels.remove(channel)
-                                prefs.edit().putStringSet(CHANNELS, channels.toSet()).apply()
+                                prefs.edit()
+                                    .putStringSet(CHANNELS, channels.toSet())
+                                    .apply()
                             },
                         )
 
                         "settings" -> SettingsScreen(
+                            repository = repository,
                             darkMode = darkMode,
-                            serifFont = serifFont,
                             onDarkModeChange = {
                                 darkMode = it
                                 prefs.edit().putBoolean("dark_mode", it).apply()
-                            },
-                            onSerifFontChange = {
-                                serifFont = it
-                                prefs.edit().putBoolean("serif_font", it).apply()
                             },
                         )
 
@@ -264,7 +288,6 @@ fun TelegramReaderApp() {
                                 repository = repository,
                                 channel = channel,
                                 refreshKey = feedRefreshKey,
-                                serifFont = serifFont,
                                 onOpenPdf = {
                                     selectedPdf = it
                                     page = "pdf"
@@ -272,11 +295,14 @@ fun TelegramReaderApp() {
                             )
                         }
 
-                        "pdf" -> selectedPdf?.let { doc ->
+                        "pdf" -> selectedPdf?.let { document ->
                             PdfViewer(
                                 repository = repository,
-                                url = doc.url,
-                                title = doc.title,
+                                url = document.url,
+                                title = document.title,
+                                onOpenExternal = {
+                                    openExternal(context, document.url)
+                                },
                             )
                         }
                     }
@@ -290,7 +316,9 @@ fun TelegramReaderApp() {
                         val channel = normalizeChannel(raw)
                         if (channel.isNotBlank() && channel !in channels) {
                             channels.add(channel)
-                            prefs.edit().putStringSet(CHANNELS, channels.toSet()).apply()
+                            prefs.edit()
+                                .putStringSet(CHANNELS, channels.toSet())
+                                .apply()
                         }
                         showAdd = false
                     },
@@ -306,45 +334,179 @@ private fun HomeScreen(
     onOpen: (String) -> Unit,
     onAdd: () -> Unit,
 ) {
+    val gradient = Brush.linearGradient(
+        listOf(
+            MaterialTheme.colorScheme.primary,
+            MaterialTheme.colorScheme.tertiary,
+        ),
+    )
+
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 10.dp,
+            bottom = 100.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "کانال‌های شما",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (channels.isEmpty()) {
-                    "یک کانال عمومی تلگرام اضافه کنید؛ عکس، ویدئو و فایل‌های پست‌ها در خود برنامه نمایش داده می‌شوند."
-                } else {
-                    "برای مشاهده پست‌ها، رسانه‌ها و فایل‌ها روی یک کانال بزنید."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(gradient)
+                    .padding(22.dp),
+            ) {
+                Column {
+                    Text(
+                        "مطالب تلگرام، مرتب و فارسی",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "کانال‌های عمومی را بدون شلوغی اضافه دنبال کنید؛ عکس، ویدئو و PDF در خود برنامه باز می‌شوند.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.92f),
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FeaturePill(
+                            icon = Icons.Default.VideoLibrary,
+                            text = "ویدئوی روان",
+                        )
+                        FeaturePill(
+                            icon = Icons.Default.Description,
+                            text = "PDF داخلی",
+                        )
+                        FeaturePill(
+                            icon = Icons.Default.Speed,
+                            text = "کش سریع",
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "کانال‌های شما",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    toPersianDigits(channels.size.toString()),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
         if (channels.isEmpty()) {
             item {
-                Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("افزودن اولین کانال")
-                }
+                EmptyChannelsCard(onAdd)
             }
         } else {
-            items(channels) { channel ->
-                ChannelCard(channel = channel, onClick = { onOpen(channel) })
+            items(channels, key = { it }) { channel ->
+                ChannelCard(
+                    channel = channel,
+                    onClick = { onOpen(channel) },
+                )
             }
         }
-        item { Spacer(Modifier.height(88.dp)) }
+    }
+}
+
+@Composable
+private fun FeaturePill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+) {
+    Row(
+        modifier = Modifier
+            .background(
+                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(50),
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(15.dp),
+        )
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+@Composable
+private fun EmptyChannelsCard(onAdd: () -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(62.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        CircleShape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.RssFeed,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "هنوز کانالی اضافه نکرده‌اید",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "نام کاربری یا لینک یک کانال عمومی تلگرام را اضافه کنید.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onAdd) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("افزودن کانال")
+            }
+        }
     }
 }
 
@@ -356,92 +518,140 @@ private fun ChannelsScreen(
 ) {
     if (channels.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("هنوز کانالی اضافه نشده است.")
+            Text(
+                "هنوز کانالی اضافه نشده است.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         return
     }
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 8.dp,
+            bottom = 100.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item { Spacer(Modifier.height(8.dp)) }
-        items(channels) { channel ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
+        items(channels, key = { it }) { channel ->
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpen(channel) },
+                shape = RoundedCornerShape(22.dp),
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 8.dp),
-                    ) {
+                    ChannelAvatar(channel)
+                    Spacer(Modifier.size(12.dp))
+                    Column(Modifier.weight(1f)) {
                         Text(
                             "@$channel",
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
                             textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
-                            "کانال عمومی تلگرام",
+                            "کانال عمومی",
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    TextButton(onClick = { onOpen(channel) }) { Text("باز کردن") }
                     IconButton(onClick = { onRemove(channel) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "حذف")
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "حذف",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
         }
-        item { Spacer(Modifier.height(88.dp)) }
     }
 }
 
 @Composable
-private fun ChannelCard(channel: String, onClick: () -> Unit) {
-    Card(
+private fun ChannelCard(
+    channel: String,
+    onClick: () -> Unit,
+) {
+    ElevatedCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(18.dp)) {
-            Text(
-                "@$channel",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Right,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "مشاهده آخرین پست‌ها",
-                style = MaterialTheme.typography.bodySmall,
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChannelAvatar(channel)
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "@$channel",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Right,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "مشاهده آخرین پست‌ها",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun AddChannelDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+private fun ChannelAvatar(channel: String) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .background(
+                MaterialTheme.colorScheme.primaryContainer,
+                CircleShape,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            channel.firstOrNull()?.uppercase() ?: "@",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+@Composable
+private fun AddChannelDialog(
+    onDismiss: () -> Unit,
+    onAdd: (String) -> Unit,
+) {
     var value by remember { mutableStateOf("") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("افزودن کانال") },
         text = {
             Column {
-                Text("نام کاربری یا لینک کانال عمومی را وارد کنید.")
+                Text(
+                    "نام کاربری یا لینک کانال عمومی را وارد کنید.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = value,
@@ -456,10 +666,14 @@ private fun AddChannelDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
             TextButton(
                 onClick = { onAdd(value) },
                 enabled = normalizeChannel(value).isNotBlank(),
-            ) { Text("افزودن") }
+            ) {
+                Text("افزودن")
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("انصراف") }
+            TextButton(onClick = onDismiss) {
+                Text("انصراف")
+            }
         },
     )
 }
@@ -469,7 +683,6 @@ private fun FeedScreen(
     repository: TelegramRepository,
     channel: String,
     refreshKey: Int,
-    serifFont: Boolean,
     onOpenPdf: (TelegramDocument) -> Unit,
 ) {
     var pageData by remember(channel) { mutableStateOf<PostsPage?>(null) }
@@ -477,81 +690,91 @@ private fun FeedScreen(
     var loadingMore by remember(channel) { mutableStateOf(false) }
     var error by remember(channel) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val httpClient = remember(channel, refreshKey) { repository.client() }
 
     LaunchedEffect(channel, refreshKey) {
         loading = true
         error = null
+
         runCatching {
-            withContext(Dispatchers.IO) { repository.fetchPosts(channel) }
-        }.onSuccess { pageData = it }
-            .onFailure { error = it.message ?: "خطا در دریافت اطلاعات" }
+            withContext(Dispatchers.IO) {
+                repository.fetchPosts(channel)
+            }
+        }.onSuccess {
+            pageData = it
+        }.onFailure {
+            error = it.message ?: "خطا در دریافت اطلاعات"
+        }
+
         loading = false
     }
 
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
+        loading && pageData == null -> FeedLoading()
 
-        error != null && pageData == null -> Column(
-            Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(error ?: "خطا", textAlign = TextAlign.Center)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "از اتصال اینترنت یا تنظیمات پراکسی مطمئن شوید و دوباره تازه‌سازی کنید.",
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-            )
-        }
+        error != null && pageData == null -> FeedError(
+            message = error ?: "خطا در دریافت اطلاعات",
+        )
 
         else -> {
             val current = pageData
             if (current == null || current.posts.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("پستی پیدا نشد.")
+                    Text(
+                        "پستی پیدا نشد.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 return
             }
 
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 10.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 10.dp,
+                    end = 10.dp,
+                    top = 6.dp,
+                    bottom = 24.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 current.channel?.let { info ->
-                    item { ChannelHeader(info) }
+                    item(key = "channel_header") {
+                        ChannelHeader(info)
+                    }
                 }
 
-                items(current.posts, key = { it.id }) { post ->
+                items(
+                    items = current.posts,
+                    key = { it.id },
+                ) { post ->
                     PostCard(
-                        repository = repository,
                         post = post,
-                        serifFont = serifFont,
+                        httpClient = httpClient,
                         onOpenPdf = onOpenPdf,
                     )
                 }
 
                 if (current.hasMore && current.nextBefore != null) {
-                    item {
+                    item(key = "load_more") {
                         OutlinedButton(
                             onClick = {
                                 if (loadingMore) return@OutlinedButton
                                 loadingMore = true
+
                                 scope.launch {
                                     runCatching {
                                         withContext(Dispatchers.IO) {
-                                            repository.fetchPosts(channel, current.nextBefore)
+                                            repository.fetchPosts(
+                                                channel = channel,
+                                                before = current.nextBefore,
+                                            )
                                         }
                                     }.onSuccess { next ->
                                         val merged = (current.posts + next.posts)
                                             .distinctBy { it.id }
                                             .sortedByDescending { it.id }
+
                                         pageData = current.copy(
                                             posts = merged,
                                             nextBefore = next.nextBefore,
@@ -560,6 +783,7 @@ private fun FeedScreen(
                                     }.onFailure {
                                         error = it.message
                                     }
+
                                     loadingMore = false
                                 }
                             },
@@ -576,8 +800,56 @@ private fun FeedScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
 
-                item { Spacer(Modifier.height(16.dp)) }
+@Composable
+private fun FeedLoading() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "در حال دریافت پست‌ها…",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FeedError(message: String) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text(
+                    "دریافت اطلاعات ممکن نشد",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "اتصال اینترنت یا پراکسی را بررسی کنید و از دکمه تازه‌سازی استفاده کنید.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
             }
         }
     }
@@ -586,12 +858,10 @@ private fun FeedScreen(
 @Composable
 private fun ChannelHeader(info: ChannelInfo) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-        shape = RoundedCornerShape(22.dp),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
         ),
     ) {
         Row(
@@ -600,36 +870,59 @@ private fun ChannelHeader(info: ChannelInfo) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            info.photoUrl?.let { url ->
+            if (!info.photoUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(url)
-                        .crossfade(true)
+                        .data(info.photoUrl)
+                        .crossfade(100)
                         .build(),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(58.dp)
+                        .size(62.dp)
                         .clip(CircleShape),
+                    contentScale = ContentScale.Crop,
                 )
-                Spacer(Modifier.size(12.dp))
+            } else {
+                ChannelAvatar(info.username)
             }
+
+            Spacer(Modifier.size(12.dp))
+
             Column(Modifier.weight(1f)) {
                 Text(
                     info.title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Right,
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
                     "@\${info.username}",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
                 )
+
                 info.subscriberCount?.let {
-                    Text(it, style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        toPersianDigits(it),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
                 }
-                info.description?.takeIf { it.isNotBlank() }?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall)
-                }
+
+                info.description
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let {
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
             }
         }
     }
@@ -637,35 +930,41 @@ private fun ChannelHeader(info: ChannelInfo) {
 
 @Composable
 private fun PostCard(
-    repository: TelegramRepository,
     post: TelegramPost,
-    serifFont: Boolean,
+    httpClient: OkHttpClient,
     onOpenPdf: (TelegramDocument) -> Unit,
 ) {
     val context = LocalContext.current
     var openPhoto by remember { mutableStateOf<String?>(null) }
-    val httpClient = remember { repository.client() }
 
-    Card(
+    ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(12.dp)) {
-            post.forwardedFrom?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    "فوروارد از $it",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(8.dp))
-            }
+        Column(Modifier.padding(11.dp)) {
+            post.forwardedFrom
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    Text(
+                        "فوروارد از $it",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 3.dp),
+                        textAlign = TextAlign.Right,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
 
             post.media.forEachIndexed { index, media ->
                 if (index > 0) Spacer(Modifier.height(8.dp))
+
                 when (media.kind) {
                     MediaKind.PHOTO -> PhotoMedia(
                         url = media.url,
-                        modifier = Modifier.height(260.dp),
+                        modifier = Modifier.height(280.dp),
                         onOpen = { openPhoto = media.url },
                     )
 
@@ -694,13 +993,15 @@ private fun PostCard(
             }
 
             if (!post.html.isNullOrBlank()) {
-                RichPostText(post.html, serifFont)
+                RichPostText(post.html)
             } else if (post.text.isNotBlank()) {
                 Text(
                     post.text,
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Right,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
                 )
             }
 
@@ -720,23 +1021,39 @@ private fun PostCard(
 
             if (post.date.isNotBlank() || post.views != null) {
                 Spacer(Modifier.height(10.dp))
-                HorizontalDivider()
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                )
                 Spacer(Modifier.height(8.dp))
+
                 Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         formatDate(post.date),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
                     )
+
                     post.views?.let {
-                        Text(
-                            "\${toPersianDigits(it)} بازدید",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.RemoveRedEye,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                toPersianDigits(it),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -746,7 +1063,11 @@ private fun PostCard(
                     onClick = { openExternal(context, url) },
                     modifier = Modifier.align(Alignment.End),
                 ) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = null)
+                    Icon(
+                        Icons.Default.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp),
+                    )
                     Spacer(Modifier.size(6.dp))
                     Text("باز کردن پست")
                 }
@@ -755,7 +1076,10 @@ private fun PostCard(
     }
 
     openPhoto?.let { url ->
-        FullScreenPhoto(url = url, onDismiss = { openPhoto = null })
+        FullScreenPhoto(
+            url = url,
+            onDismiss = { openPhoto = null },
+        )
     }
 }
 
@@ -768,9 +1092,13 @@ private fun DocumentCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (document.isPdf) {
+                MaterialTheme.colorScheme.tertiaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
         ),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
     ) {
         Row(
             modifier = Modifier
@@ -778,13 +1106,36 @@ private fun DocumentCard(
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = if (document.isPdf) Icons.Default.PictureAsPdf else Icons.Default.InsertDriveFile,
-                contentDescription = null,
-                modifier = Modifier.size(34.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(
+                        if (document.isPdf) {
+                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
+                        } else {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        },
+                        RoundedCornerShape(14.dp),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (document.isPdf) {
+                        Icons.Default.PictureAsPdf
+                    } else {
+                        Icons.Default.InsertDriveFile
+                    },
+                    contentDescription = null,
+                    tint = if (document.isPdf) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+
             Spacer(Modifier.size(12.dp))
+
             Column(Modifier.weight(1f)) {
                 Text(
                     document.title,
@@ -793,6 +1144,7 @@ private fun DocumentCard(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 document.extra?.let {
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         it,
                         style = MaterialTheme.typography.bodySmall,
@@ -800,10 +1152,11 @@ private fun DocumentCard(
                     )
                 }
                 if (document.isPdf) {
+                    Spacer(Modifier.height(3.dp))
                     Text(
-                        "نمایش PDF داخل برنامه",
+                        "برای نمایش داخل برنامه لمس کنید",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
             }
@@ -812,15 +1165,24 @@ private fun DocumentCard(
 }
 
 @Composable
-private fun RichPostText(html: String, serifFont: Boolean) {
-    val color = MaterialTheme.colorScheme.onSurface.toArgb()
+private fun RichPostText(html: String) {
+    val context = LocalContext.current
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+    val vazirmatn = remember {
+        ResourcesCompat.getFont(context, R.font.vazirmatn_regular)
+    }
+
     AndroidView(
-        modifier = Modifier.fillMaxWidth(),
-        factory = { context ->
-            TextView(context).apply {
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        factory = { viewContext ->
+            TextView(viewContext).apply {
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
                 textDirection = View.TEXT_DIRECTION_RTL
                 textAlignment = View.TEXT_ALIGNMENT_VIEW_END
-                gravity = Gravity.END
+                gravity = Gravity.END or Gravity.TOP
                 movementMethod = LinkMovementMethod.getInstance()
                 linksClickable = true
                 setTextIsSelectable(true)
@@ -830,180 +1192,249 @@ private fun RichPostText(html: String, serifFont: Boolean) {
         },
         update = { view ->
             view.text = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
-            view.setTextColor(color)
-            view.typeface = Typeface.create(
-                if (serifFont) "serif" else "sans-serif",
-                Typeface.NORMAL,
-            )
+            view.setTextColor(textColor)
+            view.setLinkTextColor(linkColor)
+            view.typeface = Typeface.create(vazirmatn, Typeface.NORMAL)
         },
     )
 }
 
 @Composable
 private fun SettingsScreen(
+    repository: TelegramRepository,
     darkMode: Boolean,
-    serifFont: Boolean,
     onDarkModeChange: (Boolean) -> Unit,
-    onSerifFontChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
-    var proxyEnabled by remember { mutableStateOf(prefs.getBoolean("proxy_enabled", false)) }
-    var host by remember { mutableStateOf(prefs.getString("proxy_host", "") ?: "") }
-    var port by remember { mutableStateOf(prefs.getInt("proxy_port", 8080).toString()) }
-    var type by remember { mutableStateOf(prefs.getString("proxy_type", "HTTP") ?: "HTTP") }
+    var proxyEnabled by remember {
+        mutableStateOf(prefs.getBoolean("proxy_enabled", false))
+    }
+    var host by remember {
+        mutableStateOf(prefs.getString("proxy_host", "") ?: "")
+    }
+    var port by remember {
+        mutableStateOf(prefs.getInt("proxy_port", 8080).toString())
+    }
+    var type by remember {
+        mutableStateOf(prefs.getString("proxy_type", "HTTP") ?: "HTTP")
+    }
     var saved by remember { mutableStateOf(false) }
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 8.dp,
+            bottom = 32.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Spacer(Modifier.height(8.dp))
-            Text("ظاهر و فارسی‌سازی", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        }
-        item {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("حالت تیره")
-                    Text("رابط کامل راست‌به‌چپ است.", style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = darkMode, onCheckedChange = onDarkModeChange)
+            SettingsSection(title = "ظاهر") {
+                SettingSwitch(
+                    title = "حالت تیره",
+                    subtitle = "تم روشن و تیره با طراحی بهینه برای مطالعه",
+                    checked = darkMode,
+                    onCheckedChange = onDarkModeChange,
+                )
+                HorizontalDivider()
+                SettingInfo(
+                    title = "فونت برنامه",
+                    value = "Vazirmatn — وزیرمتن",
+                )
+                HorizontalDivider()
+                SettingInfo(
+                    title = "جهت رابط",
+                    value = "فارسی و راست‌به‌چپ",
+                )
             }
-        }
-        item {
-            Text("فونت", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { onSerifFontChange(false) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(if (!serifFont) "✓ خوانا" else "خوانا")
-                }
-                OutlinedButton(
-                    onClick = { onSerifFontChange(true) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(if (serifFont) "✓ نسخ" else "نسخ")
-                }
-            }
-            Text(
-                "هر دو حالت از شکل‌دهی و حروف فارسی اندروید استفاده می‌کنند.",
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
 
         item {
-            Spacer(Modifier.height(8.dp))
-            Text("پراکسی", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        }
-        item {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("استفاده از پراکسی", modifier = Modifier.weight(1f))
-                Switch(
+            SettingsSection(title = "پراکسی") {
+                SettingSwitch(
+                    title = "استفاده از پراکسی",
+                    subtitle = "برای اتصال به تلگرام در شبکه‌های محدود",
                     checked = proxyEnabled,
                     onCheckedChange = {
                         proxyEnabled = it
                         saved = false
                     },
                 )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        type = "HTTP"
+
+                Spacer(Modifier.height(10.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            type = "HTTP"
+                            saved = false
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (type == "HTTP") "✓ HTTP" else "HTTP")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            type = "SOCKS"
+                            saved = false
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (type == "SOCKS") "✓ SOCKS" else "SOCKS")
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = {
+                        host = it
                         saved = false
                     },
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (type == "HTTP") "✓ HTTP" else "HTTP") }
-                OutlinedButton(
-                    onClick = {
-                        type = "SOCKS"
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("آدرس پراکسی") },
+                    singleLine = true,
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = {
+                        port = it.filter(Char::isDigit)
                         saved = false
                     },
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (type == "SOCKS") "✓ SOCKS" else "SOCKS") }
-            }
-        }
-        item {
-            OutlinedTextField(
-                value = host,
-                onValueChange = {
-                    host = it
-                    saved = false
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("آدرس پراکسی") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = port,
-                onValueChange = {
-                    port = it.filter(Char::isDigit)
-                    saved = false
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("پورت") },
-                singleLine = true,
-            )
-        }
-        item {
-            Button(
-                onClick = {
-                    prefs.edit()
-                        .putBoolean("proxy_enabled", proxyEnabled)
-                        .putString("proxy_host", host.trim())
-                        .putInt("proxy_port", port.toIntOrNull() ?: 8080)
-                        .putString("proxy_type", type)
-                        .apply()
-                    saved = true
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (saved) "ذخیره شد" else "ذخیره تنظیمات پراکسی")
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("پورت") },
+                    singleLine = true,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Button(
+                    onClick = {
+                        prefs.edit()
+                            .putBoolean("proxy_enabled", proxyEnabled)
+                            .putString("proxy_host", host.trim())
+                            .putInt("proxy_port", port.toIntOrNull() ?: 8080)
+                            .putString("proxy_type", type)
+                            .apply()
+
+                        repository.invalidateClient()
+                        saved = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (saved) "ذخیره شد" else "ذخیره تنظیمات پراکسی")
+                }
             }
         }
 
         item {
-            Spacer(Modifier.height(6.dp))
-            Text("رسانه", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "عکس‌ها داخل برنامه باز می‌شوند، ویدئوها پخش‌کننده داخلی دارند و PDF پس از دریافت داخل برنامه صفحه‌به‌صفحه نمایش داده می‌شود.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Spacer(Modifier.height(24.dp))
+            SettingsSection(title = "عملکرد") {
+                SettingInfo(
+                    title = "کش شبکه",
+                    value = "۲۵۶ مگابایت",
+                )
+                HorizontalDivider()
+                SettingInfo(
+                    title = "کش PDF",
+                    value = "۲۵۶ مگابایت",
+                )
+                HorizontalDivider()
+                SettingInfo(
+                    title = "نسخه",
+                    value = "۰.۳.۰",
+                )
+            }
         }
     }
 }
 
-private fun persianTypography(serif: Boolean): Typography {
-    val base = Typography()
-    val family = if (serif) FontFamily.Serif else FontFamily.SansSerif
-    val locale = LocaleList(Locale("fa-IR"))
-    return Typography(
-        headlineSmall = base.headlineSmall.copy(fontFamily = family, localeList = locale),
-        titleLarge = base.titleLarge.copy(fontFamily = family, localeList = locale),
-        titleMedium = base.titleMedium.copy(fontFamily = family, localeList = locale),
-        bodyLarge = base.bodyLarge.copy(fontFamily = family, localeList = locale),
-        bodyMedium = base.bodyMedium.copy(fontFamily = family, localeList = locale),
-        bodySmall = base.bodySmall.copy(fontFamily = family, localeList = locale),
-        labelLarge = base.labelLarge.copy(fontFamily = family, localeList = locale),
-        labelMedium = base.labelMedium.copy(fontFamily = family, localeList = locale),
-        labelSmall = base.labelSmall.copy(fontFamily = family, localeList = locale),
+@Composable
+private fun SettingsSection(
+    title: String,
+    content: @Composable Column.() -> Unit,
+) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(horizontal = 4.dp),
     )
+    Spacer(Modifier.height(6.dp))
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun SettingSwitch(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+@Composable
+private fun SettingInfo(
+    title: String,
+    value: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Medium,
+        )
+    }
 }
 
 private fun normalizeChannel(raw: String): String =
@@ -1018,23 +1449,33 @@ private fun normalizeChannel(raw: String): String =
         .substringBefore("/")
         .filter { it.isLetterOrDigit() || it == '_' }
 
-private fun openExternal(context: Context, url: String) {
+private fun openExternal(
+    context: Context,
+    url: String,
+) {
     runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(url),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
     }
 }
 
 private fun formatDate(raw: String): String {
     if (raw.isBlank()) return ""
-    val clean = raw.replace("T", " ").replace("Z", "").take(16)
+    val clean = raw
+        .replace("T", " ")
+        .replace("Z", "")
+        .take(16)
     return toPersianDigits(clean)
 }
 
 private fun toPersianDigits(value: String): String {
     val latin = "0123456789"
     val persian = "۰۱۲۳۴۵۶۷۸۹"
+
     return buildString(value.length) {
         value.forEach { ch ->
             val index = latin.indexOf(ch)

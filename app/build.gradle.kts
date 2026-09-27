@@ -12,8 +12,8 @@ android {
         applicationId = "com.telegramreader.fa"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -45,12 +45,45 @@ android {
     }
 }
 
+val vazirmatnFontDir = layout.projectDirectory.dir("src/main/res/font")
+val downloadVazirmatnFonts by tasks.registering {
+    val files = mapOf(
+        "vazirmatn_regular.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf",
+        "vazirmatn_medium.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Medium.ttf",
+        "vazirmatn_semibold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-SemiBold.ttf",
+        "vazirmatn_bold.ttf" to "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Bold.ttf"
+    )
+
+    outputs.files(files.keys.map { vazirmatnFontDir.file(it).asFile })
+
+    doLast {
+        vazirmatnFontDir.asFile.mkdirs()
+        files.forEach { (name, source) ->
+            val target = vazirmatnFontDir.file(name).asFile
+            if (!target.exists() || target.length() < 50_000L) {
+                logger.lifecycle("Downloading Vazirmatn font: $name")
+                val temp = java.io.File(target.parentFile, "$name.tmp")
+                java.net.URI(source).toURL().openStream().use { input ->
+                    temp.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (target.exists()) target.delete()
+                check(temp.renameTo(target)) { "Could not install $name" }
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(downloadVazirmatnFonts)
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.09.03"))
 
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
