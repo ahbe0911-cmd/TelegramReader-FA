@@ -105,6 +105,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -505,7 +506,7 @@ private fun EmptyChannelsCard(onAdd: () -> Unit) {
                 "هنوز کانالی اضافه نکرده‌اید",
                 style = MaterialTheme.typography.titleMedium,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 "نام کاربری یا لینک یک کانال عمومی تلگرام را اضافه کنید.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -558,7 +559,7 @@ private fun AddChannelDialog(
                     "نام کاربری یا لینک کانال عمومی را وارد کنید.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = value,
                     onValueChange = { value = it },
@@ -1003,9 +1004,9 @@ private fun PostCard(
             .border(
                 width = 1.dp,
                 color = palette.second.copy(alpha = if (dark) 0.50f else 0.30f),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(20.dp),
             ),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = palette.first,
         ),
@@ -1014,11 +1015,11 @@ private fun PostCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(4.dp)
+                .height(3.dp)
                 .background(palette.second),
         )
 
-        Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp)) {
             post.forwardedFrom
                 ?.takeIf { it.isNotBlank() }
                 ?.let {
@@ -1028,19 +1029,19 @@ private fun PostCard(
                         color = palette.second,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 3.dp),
+                            .padding(horizontal = 2.dp, vertical = 1.dp),
                         textAlign = TextAlign.Right,
                     )
                     Spacer(Modifier.height(4.dp))
                 }
 
             post.media.forEachIndexed { index, media ->
-                if (index > 0) Spacer(Modifier.height(8.dp))
+                if (index > 0) Spacer(Modifier.height(6.dp))
 
                 when (media.kind) {
                     MediaKind.PHOTO -> PhotoMedia(
                         url = media.url,
-                        modifier = Modifier.height(280.dp),
+                        modifier = Modifier.height(245.dp),
                         onOpen = { openPhoto = media.url },
                     )
 
@@ -1074,15 +1075,15 @@ private fun PostCard(
                 Text(
                     post.text,
                     style = MaterialTheme.typography.bodyLarge,
-                    textAlign = TextAlign.Justify,
+                    textAlign = if (post.text.length >= 220) TextAlign.Justify else TextAlign.Right,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
+                        .padding(horizontal = 2.dp),
                 )
             }
 
             post.documents.forEach { document ->
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(7.dp))
                 DocumentCard(
                     document = document,
                     onClick = {
@@ -1114,7 +1115,7 @@ private fun PostCard(
                 HorizontalDivider(
                     color = palette.second.copy(alpha = 0.25f),
                 )
-                Spacer(Modifier.height(9.dp))
+                Spacer(Modifier.height(6.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1195,7 +1196,7 @@ private fun DocumentCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = accent.copy(alpha = 0.11f),
+            containerColor = accent.copy(alpha = 0.085f),
         ),
         shape = RoundedCornerShape(16.dp),
     ) {
@@ -1207,10 +1208,10 @@ private fun DocumentCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(46.dp)
+                    .size(42.dp)
                     .background(
-                        accent.copy(alpha = 0.16f),
-                        RoundedCornerShape(15.dp),
+                        accent.copy(alpha = 0.14f),
+                        RoundedCornerShape(13.dp),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1225,54 +1226,86 @@ private fun DocumentCard(
                     },
                     contentDescription = null,
                     tint = accent,
+                    modifier = Modifier.size(23.dp),
                 )
             }
 
-            Spacer(Modifier.size(11.dp))
+            Spacer(Modifier.size(9.dp))
 
-            Column(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
                 Text(
-                    document.title,
+                    text = document.title,
                     fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Right,
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                document.extra?.let {
-                    Spacer(Modifier.height(2.dp))
+
+                document.extra?.takeIf { it.isNotBlank() }?.let {
                     Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
+                        text = it,
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(Modifier.height(2.dp))
+
                 Text(
-                    when (document.kind) {
-                        DocumentKind.PDF -> "نمایش PDF داخل برنامه"
-                        DocumentKind.AUDIO -> "پخش صدا و موسیقی داخل برنامه"
-                        DocumentKind.PACKAGE -> "دانلود یا باز کردن با نصب‌کننده اندروید"
-                        DocumentKind.ARCHIVE -> "دانلود یا باز کردن با برنامه پیش‌فرض"
-                        DocumentKind.OFFICE -> "دانلود یا باز کردن با برنامه پیش‌فرض"
-                        else -> "دانلود یا باز کردن با برنامه پیش‌فرض"
+                    text = when (document.kind) {
+                        DocumentKind.PDF -> "PDF داخل برنامه"
+                        DocumentKind.AUDIO -> "پخش داخل برنامه"
+                        DocumentKind.PACKAGE -> "نصب یا ذخیره APK"
+                        DocumentKind.ARCHIVE -> "دانلود یا باز کردن"
+                        DocumentKind.OFFICE -> "دانلود یا باز کردن"
+                        else -> "دانلود یا باز کردن"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = accent,
+                    maxLines = 1,
                 )
             }
 
-            IconButton(onClick = onOpenSystem) {
+            Spacer(Modifier.size(4.dp))
+
+            IconButton(
+                onClick = onOpenSystem,
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(
+                        accent.copy(alpha = 0.10f),
+                        CircleShape,
+                    ),
+            ) {
                 Icon(
                     Icons.Default.OpenInNew,
                     contentDescription = "باز کردن با برنامه دیگر",
                     tint = accent,
+                    modifier = Modifier.size(19.dp),
                 )
             }
-            IconButton(onClick = onDownload) {
+
+            Spacer(Modifier.size(4.dp))
+
+            IconButton(
+                onClick = onDownload,
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(
+                        accent.copy(alpha = 0.10f),
+                        CircleShape,
+                    ),
+            ) {
                 Icon(
                     Icons.Default.Download,
                     contentDescription = "دانلود فایل",
                     tint = accent,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
@@ -1291,25 +1324,39 @@ private fun RichPostText(html: String) {
     AndroidView(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 2.dp),
         factory = { viewContext ->
             TextView(viewContext).apply {
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
                 textDirection = View.TEXT_DIRECTION_RTL
-                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                gravity = Gravity.START or Gravity.TOP
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    justificationMode = Layout.JUSTIFICATION_MODE_INTER_WORD
-                }
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_END
+                gravity = Gravity.END or Gravity.TOP
+                includeFontPadding = false
+                breakStrategy = Layout.BREAK_STRATEGY_BALANCED
+                hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
                 movementMethod = LinkMovementMethod.getInstance()
                 linksClickable = true
                 setTextIsSelectable(true)
-                setLineSpacing(0f, 1.18f)
-                textSize = 16f
+                setLineSpacing(0f, 1.08f)
+                textSize = 15.5f
             }
         },
         update = { view ->
-            view.text = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
+            val richText = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
+            view.text = richText
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val plainLength = richText.toString().trim().length
+                val wordCount = richText.toString()
+                    .trim()
+                    .split(Regex("\\s+"))
+                    .count { it.isNotBlank() }
+                view.justificationMode =
+                    if (plainLength >= 220 && wordCount >= 32) {
+                        Layout.JUSTIFICATION_MODE_INTER_WORD
+                    } else {
+                        Layout.JUSTIFICATION_MODE_NONE
+                    }
+            }
             view.setTextColor(textColor)
             view.setLinkTextColor(linkColor)
             view.typeface = Typeface.create(vazirmatn, Typeface.NORMAL)
