@@ -94,12 +94,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -994,7 +994,7 @@ private fun PostCard(
     val context = LocalContext.current
     var openPhoto by remember { mutableStateOf<String?>(null) }
     var activeAudioUrl by remember(post.id) { mutableStateOf<String?>(null) }
-    val dark = isSystemInDarkTheme()
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val palette = remember(post.id, dark) { newsCardPalette(post.id, dark) }
 
     ElevatedCard(
