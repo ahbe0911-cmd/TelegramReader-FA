@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "com.telegramreader.fa"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 35
         versionCode = 5
         versionName = "0.5.0"
