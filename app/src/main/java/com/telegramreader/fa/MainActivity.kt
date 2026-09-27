@@ -12,6 +12,10 @@ import android.os.Bundle
 import android.os.Build
 import android.text.Layout
 import android.text.Html
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.TextPaint
+import android.text.style.MetricAffectingSpan
 import android.text.method.LinkMovementMethod
 import android.view.Gravity
 import android.view.View
@@ -103,6 +107,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1078,17 +1084,7 @@ private fun PostCard(
             if (!post.html.isNullOrBlank()) {
                 RichPostText(post.html)
             } else if (post.text.isNotBlank()) {
-                Text(
-                    post.text,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 16.sp,
-                        lineHeight = 28.sp,
-                    ),
-                    textAlign = TextAlign.Justify,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 2.dp),
-                )
+                PlainPostText(post.text)
             }
 
             post.documents.forEach { document ->
@@ -1328,6 +1324,47 @@ private fun DocumentCard(
 }
 
 @Composable
+private fun PlainPostText(text: String) {
+    val normalized = text.trim()
+    if (normalized.isBlank()) return
+
+    val titleEnd = headlineEnd(normalized)
+    val styled = buildAnnotatedString {
+        if (titleEnd > 0) {
+            pushStyle(
+                SpanStyle(
+                    fontFamily = Rooznameh,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Normal,
+                ),
+            )
+            append(normalized.substring(0, titleEnd).trim())
+            pop()
+
+            val body = normalized.substring(titleEnd).trim()
+            if (body.isNotBlank()) {
+                append("\n\n")
+                append(body)
+            }
+        } else {
+            append(normalized)
+        }
+    }
+
+    Text(
+        text = styled,
+        style = MaterialTheme.typography.bodyLarge.copy(
+            fontSize = 17.sp,
+            lineHeight = 31.sp,
+        ),
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
 private fun RichPostText(html: String) {
     val context = LocalContext.current
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
@@ -1335,38 +1372,86 @@ private fun RichPostText(html: String) {
     val vazirmatn = remember {
         ResourcesCompat.getFont(context, R.font.vazirmatn_regular)
     }
+    val rooznameh = remember {
+        ResourcesCompat.getFont(context, R.font.a_rooznameh)
+    }
 
     AndroidView(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 2.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         factory = { viewContext ->
             TextView(viewContext).apply {
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
                 textDirection = View.TEXT_DIRECTION_RTL
-                textAlignment = View.TEXT_ALIGNMENT_VIEW_END
-                gravity = Gravity.END or Gravity.TOP
+                textAlignment = View.TEXT_ALIGNMENT_CENTER
+                gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP
                 includeFontPadding = false
-                breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
-                hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NORMAL
+                breakStrategy = Layout.BREAK_STRATEGY_BALANCED
+                hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
                 movementMethod = LinkMovementMethod.getInstance()
                 linksClickable = true
                 setTextIsSelectable(true)
-                setLineSpacing(0f, 1.10f)
-                textSize = 16f
+                setLineSpacing(4f, 1.14f)
+                textSize = 17f
             }
         },
         update = { view ->
-            val richText = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
+            val richText = SpannableStringBuilder(
+                Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY),
+            )
+            val plain = richText.toString()
+            val titleEnd = headlineEnd(plain)
+            if (titleEnd > 0 && rooznameh != null) {
+                richText.setSpan(
+                    AppTypefaceSpan(rooznameh),
+                    0,
+                    titleEnd.coerceAtMost(richText.length),
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+
             view.text = richText
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                view.justificationMode = Layout.JUSTIFICATION_MODE_INTER_WORD
+                view.justificationMode = Layout.JUSTIFICATION_MODE_NONE
             }
             view.setTextColor(textColor)
             view.setLinkTextColor(linkColor)
             view.typeface = Typeface.create(vazirmatn, Typeface.NORMAL)
         },
     )
+}
+
+private fun headlineEnd(text: String): Int {
+    val trimmedStart = text.indexOfFirst { !it.isWhitespace() }
+        .takeIf { it >= 0 } ?: return 0
+    val clean = text.substring(trimmedStart)
+
+    val paragraphBreak = Regex("\\n\\s*\\n").find(clean)?.range?.first
+    if (paragraphBreak != null && paragraphBreak in 1..180) {
+        return trimmedStart + paragraphBreak
+    }
+
+    val firstLine = clean.indexOf('\n')
+    if (firstLine in 1..140) {
+        return trimmedStart + firstLine
+    }
+
+    return if (clean.length <= 110) text.length else 0
+}
+
+private class AppTypefaceSpan(
+    private val customTypeface: Typeface,
+) : MetricAffectingSpan() {
+    override fun updateDrawState(textPaint: TextPaint) {
+        textPaint.typeface = customTypeface
+        textPaint.textSize *= 1.10f
+    }
+
+    override fun updateMeasureState(textPaint: TextPaint) {
+        textPaint.typeface = customTypeface
+        textPaint.textSize *= 1.10f
+    }
 }
 
 @Composable
