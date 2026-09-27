@@ -1,15 +1,9 @@
 package com.telegramreader.fa.ui
 
-import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
-import android.os.ParcelFileDescriptor
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -41,17 +33,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
@@ -60,9 +50,9 @@ import coil.compose.AsyncImagePainter
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import coil.request.ImageRequest
+import com.github.barteksc.pdfviewer.PDFView
 import com.telegramreader.fa.data.TelegramRepository
 import java.io.File
-import kotlin.math.min
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -76,14 +66,14 @@ fun PhotoMedia(
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(LocalContext.current)
             .data(url)
-            .crossfade(120)
+            .crossfade(90)
             .setHeader("User-Agent", TelegramRepository.USER_AGENT)
             .setHeader("Referer", "https://t.me/")
             .build(),
         contentDescription = null,
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onOpen),
         contentScale = ContentScale.Crop,
     ) {
@@ -95,7 +85,7 @@ fun PhotoMedia(
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(26.dp),
+                    modifier = Modifier.size(24.dp),
                     strokeWidth = 2.dp,
                 )
             }
@@ -120,7 +110,7 @@ fun StickerMedia(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(url)
-                .crossfade(100)
+                .crossfade(80)
                 .setHeader("User-Agent", TelegramRepository.USER_AGENT)
                 .setHeader("Referer", "https://t.me/")
                 .build(),
@@ -174,25 +164,45 @@ fun VideoMedia(
     muted: Boolean = false,
 ) {
     val context = LocalContext.current
+
+    // Start playback sooner, then keep a larger forward buffer once playing.
+    val loadControl = remember {
+        DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                2_000,   // min buffer
+                30_000,  // max buffer
+                350,     // start playback
+                700,     // resume after rebuffer
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+    }
+
     val player = remember(url, httpClient) {
-        val factory = OkHttpDataSource.Factory(httpClient)
+        val dataSourceFactory = OkHttpDataSource.Factory(httpClient)
             .setDefaultRequestProperties(
                 mapOf(
                     "User-Agent" to TelegramRepository.USER_AGENT,
                     "Referer" to "https://t.me/",
+                    "Accept" to "*/*",
                 ),
             )
 
-        val source = ProgressiveMediaSource.Factory(factory)
+        val source = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(MediaItem.fromUri(url))
 
-        ExoPlayer.Builder(context).build().apply {
-            setMediaSource(source)
-            repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            volume = if (muted) 0f else 1f
-            playWhenReady = autoplay
-            prepare()
-        }
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                setMediaSource(source)
+                repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                volume = if (muted) 0f else 1f
+                playWhenReady = autoplay
+                setSeekBackIncrementMs(10_000)
+                setSeekForwardIncrementMs(10_000)
+                prepare()
+            }
     }
 
     DisposableEffect(player) {
@@ -204,7 +214,7 @@ fun VideoMedia(
             PlayerView(ctx).apply {
                 this.player = player
                 useController = true
-                controllerShowTimeoutMs = 2500
+                controllerShowTimeoutMs = 2200
                 setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                 keepScreenOn = false
             }
@@ -213,11 +223,19 @@ fun VideoMedia(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(16f / 9f)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(Color.Black),
     )
 }
 
+/**
+ * Dedicated in-app PDF reader.
+ *
+ * The previous implementation rendered each page into Compose Bitmaps with PdfRenderer.
+ * That was memory-heavy and could crash on large/complex documents.  This viewer uses
+ * Pdfium, keeps rendering inside its own optimized view and supports pinch-to-zoom,
+ * double-tap zoom and smooth vertical scrolling.
+ */
 @Composable
 fun PdfViewer(
     repository: TelegramRepository,
@@ -226,7 +244,7 @@ fun PdfViewer(
     onOpenExternal: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val downloadState by produceState<Result<File>?>(initialValue = null, url, title) {
+    val fileState by produceState<Result<File>?>(initialValue = null, url, title) {
         value = runCatching {
             withContext(Dispatchers.IO) {
                 repository.downloadPdf(url, title)
@@ -234,14 +252,13 @@ fun PdfViewer(
         }
     }
 
-    when (val result = downloadState) {
+    when (val result = fileState) {
         null -> PdfLoading(modifier)
 
         else -> result.fold(
             onSuccess = { file ->
-                PdfPages(
+                DedicatedPdfView(
                     file = file,
-                    onOpenExternal = onOpenExternal,
                     modifier = modifier,
                 )
             },
@@ -257,12 +274,56 @@ fun PdfViewer(
 }
 
 @Composable
+private fun DedicatedPdfView(
+    file: File,
+    modifier: Modifier = Modifier,
+) {
+    AndroidView(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        factory = { context ->
+            PDFView(context, null).apply {
+                setBackgroundColor(android.graphics.Color.rgb(245, 245, 245))
+                fromFile(file)
+                    .defaultPage(0)
+                    .enableSwipe(true)
+                    .swipeHorizontal(false)
+                    .enableDoubletap(true)
+                    .spacing(8)
+                    .load()
+            }
+        },
+        update = { view ->
+            // AndroidView may be reused after recomposition. Reload only when the file changed.
+            val tag = file.absolutePath
+            if (view.tag != tag) {
+                view.tag = tag
+                view.fromFile(file)
+                    .defaultPage(0)
+                    .enableSwipe(true)
+                    .swipeHorizontal(false)
+                    .enableDoubletap(true)
+                    .spacing(8)
+                    .load()
+            }
+        },
+    )
+}
+
+@Composable
 private fun PdfLoading(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator()
             Spacer(Modifier.height(12.dp))
             Text("در حال آماده‌سازی PDF…")
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "پس از دریافت، فایل با نمایشگر اختصاصی PDF باز می‌شود.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -310,198 +371,3 @@ private fun PdfError(
         }
     }
 }
-
-@Composable
-private fun PdfPages(
-    file: File,
-    onOpenExternal: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val pageCountState by produceState<Result<Int>?>(initialValue = null, file) {
-        value = runCatching {
-            withContext(Dispatchers.IO) { pdfPageCount(file) }
-        }
-    }
-
-    val result = pageCountState
-    if (result == null) {
-        PdfLoading(modifier)
-        return
-    }
-
-    val pageCount = result.getOrElse {
-        PdfError(
-            message = it.message ?: "ساختار این PDF توسط اندروید پشتیبانی نمی‌شود.",
-            onOpenExternal = onOpenExternal,
-            modifier = modifier,
-        )
-        return
-    }
-
-    if (pageCount <= 0) {
-        PdfError(
-            message = "این PDF صفحه قابل نمایش ندارد.",
-            onOpenExternal = onOpenExternal,
-            modifier = modifier,
-        )
-        return
-    }
-
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-    val targetWidthPx = remember(configuration.screenWidthDp, density) {
-        with(density) {
-            configuration.screenWidthDp.dp.roundToPx()
-        }.coerceIn(480, 960)
-    }
-
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentPadding = PaddingValues(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(
-            items = (0 until pageCount).toList(),
-            key = { it },
-        ) { pageIndex ->
-            PdfPage(
-                file = file,
-                pageIndex = pageIndex,
-                targetWidthPx = targetWidthPx,
-            )
-        }
-    }
-}
-
-@Composable
-private fun PdfPage(
-    file: File,
-    pageIndex: Int,
-    targetWidthPx: Int,
-) {
-    val renderState by produceState<Result<Bitmap>?>(initialValue = null, file, pageIndex, targetWidthPx) {
-        value = runCatching {
-            withContext(Dispatchers.IO) {
-                renderPdfPage(
-                    file = file,
-                    pageIndex = pageIndex,
-                    targetWidthPx = targetWidthPx,
-                )
-            }
-        }
-    }
-
-    val result = renderState
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp),
-        shape = RoundedCornerShape(18.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-    ) {
-        when {
-            result == null -> Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(360.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(28.dp),
-                    strokeWidth = 2.dp,
-                )
-            }
-
-            result.isFailure -> Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(160.dp)
-                    .padding(16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "صفحه \${pageIndex + 1} قابل نمایش نیست.",
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-
-            else -> {
-                val bitmap = result.getOrNull() ?: return@Card
-
-                DisposableEffect(bitmap) {
-                    onDispose {
-                        if (!bitmap.isRecycled) bitmap.recycle()
-                    }
-                }
-
-                Column {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "صفحه \${pageIndex + 1}",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.White),
-                        contentScale = ContentScale.FillWidth,
-                    )
-                    Text(
-                        "صفحه \${pageIndex + 1}",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(vertical = 8.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-private fun pdfPageCount(file: File): Int = synchronized(PdfRenderLock) {
-    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
-        PdfRenderer(descriptor).use { renderer ->
-            renderer.pageCount
-        }
-    }
-}
-
-private fun renderPdfPage(
-    file: File,
-    pageIndex: Int,
-    targetWidthPx: Int,
-): Bitmap = synchronized(PdfRenderLock) {
-    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
-        PdfRenderer(descriptor).use { renderer ->
-            require(pageIndex in 0 until renderer.pageCount) { "صفحه PDF نامعتبر است." }
-
-            renderer.openPage(pageIndex).use { page ->
-                val scale = min(
-                    targetWidthPx.toFloat() / page.width.toFloat(),
-                    MAX_RENDER_HEIGHT_PX.toFloat() / page.height.toFloat(),
-                ).coerceAtMost(1.7f)
-
-                val width = (page.width * scale).toInt().coerceAtLeast(1)
-                val height = (page.height * scale).toInt().coerceAtLeast(1)
-
-                val bitmap = Bitmap.createBitmap(
-                    width,
-                    height,
-                    Bitmap.Config.ARGB_8888,
-                )
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-                page.render(
-                    bitmap,
-                    null,
-                    null,
-                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
-                )
-                bitmap
-            }
-        }
-    }
-}
-
-private object PdfRenderLock
-private const val MAX_RENDER_HEIGHT_PX = 2400
