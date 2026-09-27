@@ -9,7 +9,8 @@ plugins {
 
 android {
     namespace = "com.telegramreader.fa"
-    compileSdk = 35
+    compileSdk = 36
+    compileSdkExtension = 19
 
     defaultConfig {
         applicationId = "com.telegramreader.fa"
