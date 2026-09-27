@@ -25,6 +25,10 @@ val Vazirmatn = FontFamily(
     Font(R.font.vazirmatn_bold, weight = FontWeight.Bold),
 )
 
+val Rooznameh = FontFamily(
+    Font(R.font.a_rooznameh, weight = FontWeight.Normal),
+)
+
 private val PersianLocale = LocaleList(Locale("fa-IR"))
 
 private fun TextStyle.fa(

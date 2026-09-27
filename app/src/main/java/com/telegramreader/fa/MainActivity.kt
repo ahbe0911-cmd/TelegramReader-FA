@@ -108,6 +108,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.content.FileProvider
@@ -125,6 +126,7 @@ import com.telegramreader.fa.ui.AudioDocumentPlayer
 import com.telegramreader.fa.ui.PhotoMedia
 import com.telegramreader.fa.ui.StickerMedia
 import com.telegramreader.fa.ui.VideoMedia
+import com.telegramreader.fa.ui.theme.Rooznameh
 import com.telegramreader.fa.ui.theme.TelegramReaderTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -736,12 +738,12 @@ private fun FeedScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 10.dp,
-                    end = 10.dp,
-                    top = 6.dp,
-                    bottom = 24.dp,
+                    start = 8.dp,
+                    end = 8.dp,
+                    top = 4.dp,
+                    bottom = 20.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(
                     items = current.posts,
@@ -914,7 +916,7 @@ private fun FeedError(message: String) {
 private fun ChannelHeader(info: ChannelInfo) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
         ),
@@ -922,7 +924,7 @@ private fun ChannelHeader(info: ChannelInfo) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!info.photoUrl.isNullOrBlank()) {
@@ -933,7 +935,7 @@ private fun ChannelHeader(info: ChannelInfo) {
                         .build(),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(62.dp)
+                        .size(54.dp)
                         .clip(CircleShape),
                     contentScale = ContentScale.Crop,
                 )
@@ -941,13 +943,17 @@ private fun ChannelHeader(info: ChannelInfo) {
                 ChannelAvatar(info.username)
             }
 
-            Spacer(Modifier.size(12.dp))
+            Spacer(Modifier.size(10.dp))
 
             Column(Modifier.weight(1f)) {
                 Text(
                     info.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = Rooznameh,
+                        fontSize = 20.sp,
+                        lineHeight = 24.sp,
+                    ),
+                    fontWeight = FontWeight.Normal,
                     textAlign = TextAlign.Right,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -969,7 +975,7 @@ private fun ChannelHeader(info: ChannelInfo) {
                 info.description
                     ?.takeIf { it.isNotBlank() }
                     ?.let {
-                        Spacer(Modifier.height(7.dp))
+                        Spacer(Modifier.height(5.dp))
                         Text(
                             it,
                             style = MaterialTheme.typography.bodySmall,
@@ -1004,9 +1010,9 @@ private fun PostCard(
             .border(
                 width = 1.dp,
                 color = palette.second.copy(alpha = if (dark) 0.50f else 0.30f),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
             ),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = palette.first,
         ),
@@ -1019,7 +1025,7 @@ private fun PostCard(
                 .background(palette.second),
         )
 
-        Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp)) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             post.forwardedFrom
                 ?.takeIf { it.isNotBlank() }
                 ?.let {
@@ -1032,11 +1038,11 @@ private fun PostCard(
                             .padding(horizontal = 2.dp, vertical = 1.dp),
                         textAlign = TextAlign.Right,
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(3.dp))
                 }
 
             post.media.forEachIndexed { index, media ->
-                if (index > 0) Spacer(Modifier.height(6.dp))
+                if (index > 0) Spacer(Modifier.height(5.dp))
 
                 when (media.kind) {
                     MediaKind.PHOTO -> PhotoMedia(
@@ -1066,7 +1072,7 @@ private fun PostCard(
             }
 
             if (post.media.isNotEmpty() && (post.text.isNotBlank() || post.html != null)) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
             }
 
             if (!post.html.isNullOrBlank()) {
@@ -1074,7 +1080,11 @@ private fun PostCard(
             } else if (post.text.isNotBlank()) {
                 Text(
                     post.text,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontFamily = Rooznameh,
+                        fontSize = 17.sp,
+                        lineHeight = 23.sp,
+                    ),
                     textAlign = if (post.text.length >= 220) TextAlign.Justify else TextAlign.Right,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1083,7 +1093,7 @@ private fun PostCard(
             }
 
             post.documents.forEach { document ->
-                Spacer(Modifier.height(7.dp))
+                Spacer(Modifier.height(6.dp))
                 DocumentCard(
                     document = document,
                     onClick = {
@@ -1101,7 +1111,7 @@ private fun PostCard(
                 )
 
                 if (document.isAudio && activeAudioUrl == document.url) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     AudioDocumentPlayer(
                         repository = repository,
                         url = document.url,
@@ -1111,11 +1121,11 @@ private fun PostCard(
             }
 
             if (post.date.isNotBlank() || post.views != null) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
                 HorizontalDivider(
-                    color = palette.second.copy(alpha = 0.25f),
+                    color = palette.second.copy(alpha = 0.22f),
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1152,15 +1162,21 @@ private fun PostCard(
             post.postUrl?.let { url ->
                 TextButton(
                     onClick = { openExternal(context, url) },
-                    modifier = Modifier.align(Alignment.End),
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .height(34.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 ) {
                     Icon(
                         Icons.Default.OpenInNew,
                         contentDescription = null,
-                        modifier = Modifier.size(17.dp),
+                        modifier = Modifier.size(16.dp),
                     )
-                    Spacer(Modifier.size(6.dp))
-                    Text("باز کردن پست")
+                    Spacer(Modifier.size(4.dp))
+                    Text(
+                        "باز کردن پست",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                 }
             }
         }
@@ -1198,20 +1214,20 @@ private fun DocumentCard(
         colors = CardDefaults.cardColors(
             containerColor = accent.copy(alpha = 0.085f),
         ),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 9.dp),
+                .padding(horizontal = 9.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(40.dp)
                     .background(
                         accent.copy(alpha = 0.14f),
-                        RoundedCornerShape(13.dp),
+                        RoundedCornerShape(12.dp),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1226,11 +1242,11 @@ private fun DocumentCard(
                     },
                     contentDescription = null,
                     tint = accent,
-                    modifier = Modifier.size(23.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
 
-            Spacer(Modifier.size(9.dp))
+            Spacer(Modifier.size(8.dp))
 
             Column(
                 modifier = Modifier.weight(1f),
@@ -1239,7 +1255,7 @@ private fun DocumentCard(
                 Text(
                     text = document.title,
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 21.sp),
                     textAlign = TextAlign.Right,
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 2,
@@ -1276,7 +1292,7 @@ private fun DocumentCard(
             IconButton(
                 onClick = onOpenSystem,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(36.dp)
                     .background(
                         accent.copy(alpha = 0.10f),
                         CircleShape,
@@ -1295,7 +1311,7 @@ private fun DocumentCard(
             IconButton(
                 onClick = onDownload,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(36.dp)
                     .background(
                         accent.copy(alpha = 0.10f),
                         CircleShape,
@@ -1317,8 +1333,8 @@ private fun RichPostText(html: String) {
     val context = LocalContext.current
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val linkColor = MaterialTheme.colorScheme.primary.toArgb()
-    val vazirmatn = remember {
-        ResourcesCompat.getFont(context, R.font.vazirmatn_regular)
+    val rooznameh = remember {
+        ResourcesCompat.getFont(context, R.font.a_rooznameh)
     }
 
     AndroidView(
@@ -1337,8 +1353,8 @@ private fun RichPostText(html: String) {
                 movementMethod = LinkMovementMethod.getInstance()
                 linksClickable = true
                 setTextIsSelectable(true)
-                setLineSpacing(0f, 1.08f)
-                textSize = 15.5f
+                setLineSpacing(0f, 1.02f)
+                textSize = 16.8f
             }
         },
         update = { view ->
@@ -1359,7 +1375,7 @@ private fun RichPostText(html: String) {
             }
             view.setTextColor(textColor)
             view.setLinkTextColor(linkColor)
-            view.typeface = Typeface.create(vazirmatn, Typeface.NORMAL)
+            view.typeface = Typeface.create(rooznameh, Typeface.NORMAL)
         },
     )
 }
