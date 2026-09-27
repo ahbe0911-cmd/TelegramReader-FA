@@ -1,5 +1,6 @@
 package com.telegramreader.fa
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
@@ -12,8 +13,11 @@ import android.text.method.LinkMovementMethod
 import android.view.Gravity
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.OpenInNew
@@ -101,7 +106,6 @@ import com.telegramreader.fa.data.TelegramDocument
 import com.telegramreader.fa.data.TelegramPost
 import com.telegramreader.fa.data.TelegramRepository
 import com.telegramreader.fa.ui.FullScreenPhoto
-import com.telegramreader.fa.ui.PdfViewer
 import com.telegramreader.fa.ui.PhotoMedia
 import com.telegramreader.fa.ui.StickerMedia
 import com.telegramreader.fa.ui.VideoMedia
@@ -156,7 +160,6 @@ fun TelegramReaderApp() {
     var page by rememberSaveable { mutableStateOf("news") }
     var selectedSection by rememberSaveable { mutableStateOf("news") }
     var selectedChannel by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedPdf by remember { mutableStateOf<TelegramDocument?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var feedRefreshKey by remember { mutableIntStateOf(0) }
 
@@ -179,7 +182,6 @@ fun TelegramReaderApp() {
                             Text(
                                 when (page) {
                                     "feed" -> selectedChannel?.let { "@$it" } ?: "کانال"
-                                    "pdf" -> selectedPdf?.title ?: "نمایش PDF"
                                     "news" -> "اخبار"
                                     "cafenet" -> "کافی‌نت"
                                     else -> "تلگرام‌خوان فارسی"
@@ -188,16 +190,9 @@ fun TelegramReaderApp() {
                             )
                         },
                         navigationIcon = {
-                            if (page == "feed" || page == "pdf") {
+                            if (page == "feed") {
                                 IconButton(
-                                    onClick = {
-                                        if (page == "pdf") {
-                                            selectedPdf = null
-                                            page = "feed"
-                                        } else {
-                                            page = selectedSection
-                                        }
-                                    },
+                                    onClick = { page = selectedSection },
                                 ) {
                                     Icon(
                                         Icons.Default.ArrowBack,
@@ -216,18 +211,6 @@ fun TelegramReaderApp() {
                                 }
                             }
 
-                            if (page == "pdf" && selectedPdf != null) {
-                                IconButton(
-                                    onClick = {
-                                        openExternal(context, selectedPdf!!.url)
-                                    },
-                                ) {
-                                    Icon(
-                                        Icons.Default.OpenInNew,
-                                        contentDescription = "باز کردن با برنامه دیگر",
-                                    )
-                                }
-                            }
                         },
                         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                             containerColor = MaterialTheme.colorScheme.background,
@@ -235,7 +218,7 @@ fun TelegramReaderApp() {
                     )
                 },
                 bottomBar = {
-                    if (page != "feed" && page != "pdf") {
+                    if (page != "feed") {
                         NavigationBar(
                             containerColor = MaterialTheme.colorScheme.surface,
                             tonalElevation = 4.dp,
@@ -325,23 +308,18 @@ fun TelegramReaderApp() {
                                 repository = repository,
                                 channel = channel,
                                 refreshKey = feedRefreshKey,
-                                onOpenPdf = {
-                                    selectedPdf = it
-                                    page = "pdf"
+                                onOpenPdf = { document ->
+                                    context.startActivity(
+                                        PdfReaderActivity.intent(
+                                            context = context,
+                                            url = document.url,
+                                            title = document.title,
+                                        ),
+                                    )
                                 },
                             )
                         }
 
-                        "pdf" -> selectedPdf?.let { document ->
-                            PdfViewer(
-                                repository = repository,
-                                url = document.url,
-                                title = document.title,
-                                onOpenExternal = {
-                                    openExternal(context, document.url)
-                                },
-                            )
-                        }
                     }
                 }
             }
@@ -597,6 +575,40 @@ private fun FeedScreen(
     var loadingMore by remember(channel) { mutableStateOf(false) }
     var error by remember(channel) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var pendingDownload by remember { mutableStateOf<TelegramDocument?>(null) }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val document = pendingDownload
+        val uri = result.data?.data
+        pendingDownload = null
+
+        if (result.resultCode == Activity.RESULT_OK && document != null && uri != null) {
+            scope.launch {
+                Toast.makeText(context, "در حال دانلود فایل…", Toast.LENGTH_SHORT).show()
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        repository.downloadFileToUri(
+                            url = document.url,
+                            title = document.title,
+                            destination = uri,
+                        )
+                    }
+                }.onSuccess {
+                    Toast.makeText(context, "فایل ذخیره شد", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "دانلود فایل ناموفق بود",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
+    }
+
     val httpClient = remember(channel, refreshKey) { repository.client() }
 
     LaunchedEffect(channel, refreshKey) {
@@ -653,6 +665,15 @@ private fun FeedScreen(
                         post = post,
                         httpClient = httpClient,
                         onOpenPdf = onOpenPdf,
+                        onDownloadDocument = { document ->
+                            pendingDownload = document
+                            val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = mimeTypeForDocument(document)
+                                putExtra(Intent.EXTRA_TITLE, safeDownloadName(document))
+                            }
+                            saveFileLauncher.launch(saveIntent)
+                        },
                     )
                 }
 
@@ -834,6 +855,7 @@ private fun PostCard(
     post: TelegramPost,
     httpClient: OkHttpClient,
     onOpenPdf: (TelegramDocument) -> Unit,
+    onDownloadDocument: (TelegramDocument) -> Unit,
 ) {
     val context = LocalContext.current
     var openPhoto by remember { mutableStateOf<String?>(null) }
@@ -917,6 +939,9 @@ private fun PostCard(
                             openExternal(context, document.url)
                         }
                     },
+                    onDownload = {
+                        onDownloadDocument(document)
+                    },
                 )
             }
 
@@ -988,6 +1013,7 @@ private fun PostCard(
 private fun DocumentCard(
     document: TelegramDocument,
     onClick: () -> Unit,
+    onDownload: () -> Unit,
 ) {
     Card(
         onClick = onClick,
@@ -1055,11 +1081,26 @@ private fun DocumentCard(
                 if (document.isPdf) {
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        "برای نمایش داخل برنامه لمس کنید",
+                        "نمایش PDF داخل برنامه",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary,
                     )
+                } else {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "قابل دانلود: APK، ZIP، Office و سایر فایل‌ها",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
+            }
+
+            IconButton(onClick = onDownload) {
+                Icon(
+                    Icons.Default.Download,
+                    contentDescription = "دانلود فایل",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }
@@ -1254,7 +1295,7 @@ private fun SettingsScreen(
                 HorizontalDivider()
                 SettingInfo(
                     title = "نسخه",
-                    value = "۰.۴.۰",
+                    value = "۰.۵.۰",
                 )
             }
         }
@@ -1338,6 +1379,37 @@ private fun SettingInfo(
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.Medium,
         )
+    }
+}
+
+private fun safeDownloadName(document: TelegramDocument): String {
+    val title = document.title.trim().ifBlank { "telegram-file" }
+    return title.replace(Regex("""[\\/:*?"<>|]"""), "_")
+}
+
+private fun mimeTypeForDocument(document: TelegramDocument): String {
+    val source = (document.title + " " + document.url).lowercase()
+    return when {
+        source.contains(".pdf") -> "application/pdf"
+        source.contains(".apk") -> "application/vnd.android.package-archive"
+        source.contains(".xapk") -> "application/octet-stream"
+        source.contains(".zip") -> "application/zip"
+        source.contains(".rar") -> "application/vnd.rar"
+        source.contains(".7z") -> "application/x-7z-compressed"
+        source.contains(".docx") -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        source.contains(".xlsx") -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        source.contains(".pptx") -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        source.contains(".doc") -> "application/msword"
+        source.contains(".xls") -> "application/vnd.ms-excel"
+        source.contains(".ppt") -> "application/vnd.ms-powerpoint"
+        source.contains(".txt") -> "text/plain"
+        source.contains(".csv") -> "text/csv"
+        source.contains(".jpg") || source.contains(".jpeg") -> "image/jpeg"
+        source.contains(".png") -> "image/png"
+        source.contains(".webp") -> "image/webp"
+        source.contains(".mp4") -> "video/mp4"
+        source.contains(".mp3") -> "audio/mpeg"
+        else -> "application/octet-stream"
     }
 }
 
