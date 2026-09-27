@@ -16,8 +16,8 @@ android {
         applicationId = "com.telegramreader.fa"
         minSdk = 28
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.8.0"
+        versionCode = 10
+        versionName = "0.8.1"
     }
 
     buildTypes {
