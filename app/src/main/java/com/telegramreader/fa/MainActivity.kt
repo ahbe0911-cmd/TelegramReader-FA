@@ -22,6 +22,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -88,10 +90,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -101,15 +105,18 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.res.ResourcesCompat
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.telegramreader.fa.data.ChannelInfo
+import com.telegramreader.fa.data.DocumentKind
 import com.telegramreader.fa.data.MediaKind
 import com.telegramreader.fa.data.PostsPage
 import com.telegramreader.fa.data.TelegramDocument
 import com.telegramreader.fa.data.TelegramPost
 import com.telegramreader.fa.data.TelegramRepository
 import com.telegramreader.fa.ui.FullScreenPhoto
+import com.telegramreader.fa.ui.AudioDocumentPlayer
 import com.telegramreader.fa.ui.PhotoMedia
 import com.telegramreader.fa.ui.StickerMedia
 import com.telegramreader.fa.ui.VideoMedia
@@ -121,6 +128,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.Locale
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private const val PREFS = "telegram_reader_fa"
 private const val LEGACY_CHANNELS = "channels"
@@ -732,9 +743,56 @@ private fun FeedScreen(
                     key = { it.id },
                 ) { post ->
                     PostCard(
+                        repository = repository,
                         post = post,
                         httpClient = httpClient,
                         onOpenPdf = onOpenPdf,
+                        onOpenSystem = { document ->
+                            scope.launch {
+                                Toast.makeText(
+                                    context,
+                                    "در حال آماده‌سازی فایل…",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+
+                                runCatching {
+                                    withContext(Dispatchers.IO) {
+                                        repository.downloadFileToCache(
+                                            url = document.url,
+                                            title = document.title,
+                                        )
+                                    }
+                                }.onSuccess { file ->
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        file,
+                                    )
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, mimeTypeForDocument(document))
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent.createChooser(intent, "باز کردن فایل با"),
+                                        )
+                                    }.onFailure {
+                                        Toast.makeText(
+                                            context,
+                                            "برنامه‌ای برای باز کردن این نوع فایل پیدا نشد.",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                }.onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "آماده‌سازی فایل ناموفق بود",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            }
+                        },
                         onDownloadDocument = { document ->
                             pendingDownload = document
                             val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -922,27 +980,48 @@ private fun ChannelHeader(info: ChannelInfo) {
 
 @Composable
 private fun PostCard(
+    repository: TelegramRepository,
     post: TelegramPost,
     httpClient: OkHttpClient,
     onOpenPdf: (TelegramDocument) -> Unit,
+    onOpenSystem: (TelegramDocument) -> Unit,
     onDownloadDocument: (TelegramDocument) -> Unit,
 ) {
     val context = LocalContext.current
     var openPhoto by remember { mutableStateOf<String?>(null) }
+    var activeAudioUrl by remember(post.id) { mutableStateOf<String?>(null) }
+    val dark = isSystemInDarkTheme()
+    val palette = remember(post.id, dark) { newsCardPalette(post.id, dark) }
 
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = palette.second.copy(alpha = if (dark) 0.50f else 0.30f),
+                shape = RoundedCornerShape(24.dp),
+            ),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = palette.first,
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
     ) {
-        Column(Modifier.padding(11.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .background(palette.second),
+        )
+
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
             post.forwardedFrom
                 ?.takeIf { it.isNotBlank() }
                 ?.let {
                     Text(
                         "فوروارد از $it",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = palette.second,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 4.dp, vertical = 3.dp),
@@ -1003,24 +1082,35 @@ private fun PostCard(
                 DocumentCard(
                     document = document,
                     onClick = {
-                        if (document.isPdf) {
-                            onOpenPdf(document)
-                        } else {
-                            openExternal(context, document.url)
+                        when {
+                            document.isPdf -> onOpenPdf(document)
+                            document.isAudio -> {
+                                activeAudioUrl =
+                                    if (activeAudioUrl == document.url) null else document.url
+                            }
+                            else -> onOpenSystem(document)
                         }
                     },
-                    onDownload = {
-                        onDownloadDocument(document)
-                    },
+                    onOpenSystem = { onOpenSystem(document) },
+                    onDownload = { onDownloadDocument(document) },
                 )
+
+                if (document.isAudio && activeAudioUrl == document.url) {
+                    Spacer(Modifier.height(8.dp))
+                    AudioDocumentPlayer(
+                        repository = repository,
+                        url = document.url,
+                        title = document.title,
+                    )
+                }
             }
 
             if (post.date.isNotBlank() || post.views != null) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                    color = palette.second.copy(alpha = 0.25f),
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(9.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1028,7 +1118,7 @@ private fun PostCard(
                 ) {
                     Text(
                         formatDate(post.date),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
@@ -1083,55 +1173,58 @@ private fun PostCard(
 private fun DocumentCard(
     document: TelegramDocument,
     onClick: () -> Unit,
+    onOpenSystem: () -> Unit,
     onDownload: () -> Unit,
 ) {
+    val accent = when (document.kind) {
+        DocumentKind.PDF -> Color(0xFFD9485F)
+        DocumentKind.AUDIO -> Color(0xFF6B5BD6)
+        DocumentKind.PACKAGE -> Color(0xFF1C8B63)
+        DocumentKind.ARCHIVE -> Color(0xFFD68122)
+        DocumentKind.OFFICE -> Color(0xFF3678C8)
+        DocumentKind.IMAGE -> Color(0xFFB84E93)
+        DocumentKind.VIDEO -> Color(0xFF177C93)
+        DocumentKind.OTHER -> MaterialTheme.colorScheme.primary
+    }
+
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (document.isPdf) {
-                MaterialTheme.colorScheme.tertiaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
+            containerColor = accent.copy(alpha = 0.11f),
         ),
         shape = RoundedCornerShape(18.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(13.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(46.dp)
                     .background(
-                        if (document.isPdf) {
-                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
-                        } else {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        },
-                        RoundedCornerShape(14.dp),
+                        accent.copy(alpha = 0.16f),
+                        RoundedCornerShape(15.dp),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (document.isPdf) {
-                        Icons.Default.PictureAsPdf
-                    } else {
-                        Icons.Default.InsertDriveFile
+                    imageVector = when (document.kind) {
+                        DocumentKind.PDF -> Icons.Default.PictureAsPdf
+                        DocumentKind.AUDIO -> Icons.Default.Headphones
+                        DocumentKind.PACKAGE -> Icons.Default.Android
+                        DocumentKind.ARCHIVE -> Icons.Default.FolderZip
+                        DocumentKind.OFFICE -> Icons.Default.Description
+                        else -> Icons.Default.InsertDriveFile
                     },
                     contentDescription = null,
-                    tint = if (document.isPdf) {
-                        MaterialTheme.colorScheme.tertiary
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
+                    tint = accent,
                 )
             }
 
-            Spacer(Modifier.size(12.dp))
+            Spacer(Modifier.size(11.dp))
 
             Column(Modifier.weight(1f)) {
                 Text(
@@ -1139,6 +1232,7 @@ private fun DocumentCard(
                     fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Right,
                     modifier = Modifier.fillMaxWidth(),
+                    maxLines = 2,
                 )
                 document.extra?.let {
                     Spacer(Modifier.height(2.dp))
@@ -1148,28 +1242,33 @@ private fun DocumentCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (document.isPdf) {
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "نمایش PDF داخل برنامه",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                } else {
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "قابل دانلود: APK، ZIP، Office و سایر فایل‌ها",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    when (document.kind) {
+                        DocumentKind.PDF -> "نمایش PDF داخل برنامه"
+                        DocumentKind.AUDIO -> "پخش صدا و موسیقی داخل برنامه"
+                        DocumentKind.PACKAGE -> "دانلود یا باز کردن با نصب‌کننده اندروید"
+                        DocumentKind.ARCHIVE -> "دانلود یا باز کردن با برنامه پیش‌فرض"
+                        DocumentKind.OFFICE -> "دانلود یا باز کردن با برنامه پیش‌فرض"
+                        else -> "دانلود یا باز کردن با برنامه پیش‌فرض"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                )
             }
 
+            IconButton(onClick = onOpenSystem) {
+                Icon(
+                    Icons.Default.OpenInNew,
+                    contentDescription = "باز کردن با برنامه دیگر",
+                    tint = accent,
+                )
+            }
             IconButton(onClick = onDownload) {
                 Icon(
                     Icons.Default.Download,
                     contentDescription = "دانلود فایل",
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = accent,
                 )
             }
         }
@@ -1561,11 +1660,87 @@ private fun openExternal(
 
 private fun formatDate(raw: String): String {
     if (raw.isBlank()) return ""
-    val clean = raw
-        .replace("T", " ")
-        .replace("Z", "")
-        .take(16)
-    return toPersianDigits(clean)
+
+    val localDateTime = runCatching {
+        OffsetDateTime.parse(raw)
+            .atZoneSameInstant(ZoneId.systemDefault())
+            .toLocalDateTime()
+    }.getOrElse {
+        runCatching {
+            LocalDateTime.parse(raw.replace("Z", ""))
+        }.getOrNull()
+    } ?: return toPersianDigits(
+        raw.replace("T", " ").replace("Z", "").take(16),
+    )
+
+    val jalali = gregorianToJalali(
+        localDateTime.year,
+        localDateTime.monthValue,
+        localDateTime.dayOfMonth,
+    )
+    val monthNames = arrayOf(
+        "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+        "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
+    )
+    val dateText = "${jalali[2]} ${monthNames[jalali[1] - 1]} ${jalali[0]}"
+    val timeText = localDateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
+    return toPersianDigits("$dateText • $timeText")
+}
+
+private fun gregorianToJalali(gy: Int, gm: Int, gd: Int): IntArray {
+    val gDayNo = intArrayOf(0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+    val gy2 = if (gm > 2) gy + 1 else gy
+    var days = 355666 +
+        365 * gy +
+        (gy2 + 3) / 4 -
+        (gy2 + 99) / 100 +
+        (gy2 + 399) / 400 +
+        gd +
+        gDayNo[gm - 1]
+
+    var jy = -1595 + 33 * (days / 12053)
+    days %= 12053
+    jy += 4 * (days / 1461)
+    days %= 1461
+
+    if (days > 365) {
+        jy += (days - 1) / 365
+        days = (days - 1) % 365
+    }
+
+    val jm: Int
+    val jd: Int
+    if (days < 186) {
+        jm = 1 + days / 31
+        jd = 1 + days % 31
+    } else {
+        jm = 7 + (days - 186) / 30
+        jd = 1 + (days - 186) % 30
+    }
+
+    return intArrayOf(jy, jm, jd)
+}
+
+private fun newsCardPalette(postId: Long, dark: Boolean): Pair<Color, Color> {
+    val light = listOf(
+        Color(0xFFF0F7FF) to Color(0xFF3678C8),
+        Color(0xFFF3F0FF) to Color(0xFF6B5BD6),
+        Color(0xFFFFF3EA) to Color(0xFFD68122),
+        Color(0xFFECFAF4) to Color(0xFF1C8B63),
+        Color(0xFFFFEEF3) to Color(0xFFD9485F),
+        Color(0xFFF0FAFC) to Color(0xFF177C93),
+    )
+    val darkPalette = listOf(
+        Color(0xFF182330) to Color(0xFF71A6E4),
+        Color(0xFF211E34) to Color(0xFF9C8FED),
+        Color(0xFF30251B) to Color(0xFFE2A251),
+        Color(0xFF172B24) to Color(0xFF55B98F),
+        Color(0xFF321E25) to Color(0xFFE77B8C),
+        Color(0xFF18292D) to Color(0xFF58AABD),
+    )
+    val palette = if (dark) darkPalette else light
+    val index = ((postId % palette.size + palette.size) % palette.size).toInt()
+    return palette[index]
 }
 
 private fun toPersianDigits(value: String): String {
